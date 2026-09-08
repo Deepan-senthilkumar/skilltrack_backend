@@ -432,24 +432,34 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         self.stdout.write(self.style.NOTICE("Seeding default Staff and Student users..."))
 
-        # 1. Staff User
+        # 1. Staff / Super Admin User
         staff_user, created = User.objects.get_or_create(
-            username='staff',
+            username='admin',
             defaults={
-                'email': 'staff@djangokalari.com',
-                'first_name': 'Django',
-                'last_name': 'Instructor',
+                'email': 'admin@skillstack.com',
+                'first_name': 'Super',
+                'last_name': 'Admin',
                 'role': 'STAFF',
                 'is_staff': True,
                 'is_superuser': True,
+                'is_admin_role': True
             }
         )
-        staff_user.set_password('Staff@12345')
+        staff_user.set_password('0912')
+        staff_user.email = 'admin@skillstack.com'
         staff_user.role = 'STAFF'
         staff_user.is_staff = True
         staff_user.is_superuser = True
+        staff_user.is_admin_role = True
         staff_user.save()
-        self.stdout.write(self.style.SUCCESS(f"Staff User: {staff_user.username} (Password: Staff@12345)"))
+        self.stdout.write(self.style.SUCCESS(f"Super Admin User: {staff_user.username} / {staff_user.email} (Password: 0912)"))
+
+        # Also update staff legacy user if existing
+        legacy_staff = User.objects.filter(username='staff').first()
+        if legacy_staff:
+            legacy_staff.set_password('0912')
+            legacy_staff.email = 'admin@skillstack.com'
+            legacy_staff.save()
 
         # 2. Student User
         student_user, created = User.objects.get_or_create(
