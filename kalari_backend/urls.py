@@ -6,7 +6,7 @@ from django.http import JsonResponse
 def health_check(request):
     return JsonResponse({
         "status": "online",
-        "service": "Django Kalari Backend API",
+        "service": "SkillStack Backend API",
         "version": "1.0.0"
     })
 
