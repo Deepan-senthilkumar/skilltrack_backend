@@ -12,6 +12,7 @@ class SubjectAdmin(admin.ModelAdmin):
     list_filter = ('is_active', 'level')
     search_fields = ('name', 'slug', 'description')
     prepopulated_fields = {'slug': ('name',)}
+    list_per_page = 10
     show_full_result_count = False
 
 
@@ -79,6 +80,7 @@ class ModuleAdmin(admin.ModelAdmin):
     list_select_related = ('subject',)
     list_filter = ('level', 'subject')
     search_fields = ('name',)
+    list_per_page = 10
     show_full_result_count = False
     inlines = [TopicInline]
 
@@ -90,6 +92,7 @@ class TopicAdmin(admin.ModelAdmin):
     list_filter = ('module__level', 'module__subject')
     search_fields = ('title', 'topic_id')
     raw_id_fields = ('module',)
+    list_per_page = 10
     show_full_result_count = False
     inlines = [TopicImageInline, CodeExampleInline, ProblemInline]
 
