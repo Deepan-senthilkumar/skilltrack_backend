@@ -1,3 +1,4 @@
+from typing import Any
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -7,7 +8,7 @@ from apps.assignments.models import ProblemAccess
 
 User = get_user_model()
 
-RAW_MODULES = [
+RAW_MODULES: list[dict[str, Any]] = [
     {
         'level': 'beginner',
         'name': 'Django Fundamentals',
@@ -430,7 +431,7 @@ class Command(BaseCommand):
     help = 'Seeds complete Django curriculum, modules, topics, examples, and practice labs from syllabus'
 
     def handle(self, *args, **options):
-        self.stdout.write(self.style.NOTICE("Seeding default Staff and Student users..."))
+        self.stdout.write(self.style.NOTICE("Seeding default Staff and Student users..."))# type: ignore[attr-defined]
 
         # 1. Staff / Super Admin User
         staff_user, created = User.objects.get_or_create(
@@ -452,7 +453,7 @@ class Command(BaseCommand):
         staff_user.is_superuser = True
         staff_user.is_admin_role = True
         staff_user.save()
-        self.stdout.write(self.style.SUCCESS(f"Super Admin User: {staff_user.username} / {staff_user.email} (Password: 0912)"))
+        self.stdout.write(self.style.SUCCESS(f"Super Admin User: {staff_user.username} / {staff_user.email} (Password: 0912)"))  # type: ignore[attr-defined]
 
         # Also update staff legacy user if existing
         legacy_staff = User.objects.filter(username='staff').first()
@@ -475,10 +476,10 @@ class Command(BaseCommand):
         student_user.set_password('Student@12345')
         student_user.role = 'STUDENT'
         student_user.save()
-        self.stdout.write(self.style.SUCCESS(f"Student User: {student_user.username} (Password: Student@12345)"))
+        self.stdout.write(self.style.SUCCESS(f"Student User: {student_user.username} (Password: Student@12345)"))  # type: ignore[attr-defined]
 
         # 3. Curriculum Data
-        self.stdout.write(self.style.NOTICE("Seeding modules, topics, and problem labs..."))
+        self.stdout.write(self.style.NOTICE("Seeding modules, topics, and problem labs..."))  # type: ignore[attr-defined]
 
         now = timezone.now()
         unlocked_first_n = 3  # Unlock first 3 labs for immediate active testing!
@@ -538,4 +539,4 @@ class Command(BaseCommand):
                         access.deadline = now + timedelta(hours=24)
                         access.save()
 
-        self.stdout.write(self.style.SUCCESS(f"Successfully seeded curriculum with {total_problems} problems across {len(RAW_MODULES)} modules!"))
+        self.stdout.write(self.style.SUCCESS(f"Successfully seeded curriculum with {total_problems} problems across {len(RAW_MODULES)} modules!"))  # type: ignore[attr-defined]

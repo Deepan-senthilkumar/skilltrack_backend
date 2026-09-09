@@ -5,5 +5,6 @@
   "typeCheckingMode": "basic",
   "useLibraryCodeForTypes": true,
   "reportMissingModuleSource": "none",
-  "reportAttributeAccessIssue": "none"
+  "reportAttributeAccessIssue": "none",
+  "reportMissingTypeStubs": "none"
 }
