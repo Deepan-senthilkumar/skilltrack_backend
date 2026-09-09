@@ -4,6 +4,7 @@ from .views import (
     StaffModuleListCreateView, StaffModuleDetailView,
     TopicDetailView, StaffTopicListCreateView, StaffTopicDetailView,
     TopicImageUploadView, TopicImageDeleteView, TopicImageListView,
+    StaffCodeExampleListCreateView, StaffCodeExampleDetailView,
     ProblemDetailView, StaffProblemListCreateView, StaffProblemDetailView,
     BatchListCreateView, BatchDetailView,
     BatchTopicProgressListView, BatchTopicProgressToggleView,
@@ -32,6 +33,10 @@ urlpatterns = [
     path('staff/topics/<int:topic_id>/images/', TopicImageUploadView.as_view(), name='topic-image-upload'),
     path('staff/topics/<int:topic_id>/images/list/', TopicImageListView.as_view(), name='topic-image-list'),
     path('staff/topic-images/<int:pk>/delete/', TopicImageDeleteView.as_view(), name='topic-image-delete'),
+
+    # Code Examples (Practical Code)
+    path('staff/code-examples/', StaffCodeExampleListCreateView.as_view(), name='staff-code-example-list-create'),
+    path('staff/code-examples/<int:pk>/', StaffCodeExampleDetailView.as_view(), name='staff-code-example-detail'),
 
     # Problems (Practice Programs)
     path('curriculum/problems/<int:pk>/', ProblemDetailView.as_view(), name='problem-detail'),

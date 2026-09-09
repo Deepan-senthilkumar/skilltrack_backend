@@ -6,12 +6,12 @@ from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from apps.assignments.permissions import IsInstructor
 from .models import (
-    Subject, Module, Topic, Problem, TopicImage,
+    Subject, Module, Topic, CodeExample, Problem, TopicImage,
     Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord,
     PlatformCapability
 )
 from .serializers import (
-    SubjectSerializer, ModuleSerializer, TopicSerializer, ProblemSerializer,
+    SubjectSerializer, ModuleSerializer, TopicSerializer, CodeExampleSerializer, ProblemSerializer,
     BatchSerializer, BatchTopicProgressSerializer, StaffDailyLogSerializer,
     StudentAttendanceRecordSerializer, TopicImageSerializer,
     PlatformCapabilitySerializer
@@ -164,6 +164,24 @@ class TopicImageListView(generics.ListAPIView):
     def get_queryset(self):
         topic_id = self.kwargs.get('topic_id')
         return TopicImage.objects.filter(topic_id=topic_id).order_by('order', 'id')
+
+
+# Code Example (Practical Code) Views
+class StaffCodeExampleListCreateView(generics.ListCreateAPIView):
+    serializer_class = CodeExampleSerializer
+    permission_classes = [IsInstructor]
+
+    def get_queryset(self):
+        topic_id = self.request.query_params.get('topic')
+        if topic_id:
+            return CodeExample.objects.filter(topic_id=topic_id).order_by('order', 'id')
+        return CodeExample.objects.all().order_by('order', 'id')
+
+
+class StaffCodeExampleDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = CodeExample.objects.all()
+    serializer_class = CodeExampleSerializer
+    permission_classes = [IsInstructor]
 
 
 # Problem Views
