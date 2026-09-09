@@ -34,7 +34,7 @@ class Subject(models.Model):
     def save(self, *args, **kwargs):
         if not self.slug:
             from django.utils.text import slugify
-            base_slug = slugify(self.name) or "subject"
+            base_slug = str(slugify(self.name)) or "subject"
             slug = base_slug
             counter = 1
             while Subject.objects.filter(slug=slug).exclude(pk=self.pk).exists():
@@ -43,8 +43,8 @@ class Subject(models.Model):
             self.slug = slug
         super().save(*args, **kwargs)
 
-    def __str__(self):
-        return self.name
+    def __str__(self) -> str:
+        return str(self.name)
 
 
 class Module(models.Model):
@@ -63,9 +63,9 @@ class Module(models.Model):
     class Meta:
         ordering = ['order', 'id']
 
-    def __str__(self):
+    def __str__(self) -> str:
         prefix = f"[{self.subject.name}] " if self.subject else ""
-        return f"{prefix}[{self.level.upper()}] {self.name}"
+        return f"{prefix}[{str(self.level).upper()}] {str(self.name)}"
 
 
 class Topic(models.Model):
@@ -83,7 +83,7 @@ class Topic(models.Model):
     def save(self, *args, **kwargs):
         if not self.topic_id:
             from django.utils.text import slugify
-            base_slug = slugify(self.title) or "topic"
+            base_slug = str(slugify(self.title)) or "topic"
             topic_id = base_slug
             counter = 1
             while Topic.objects.filter(topic_id=topic_id).exclude(pk=self.pk).exists():
@@ -92,8 +92,8 @@ class Topic(models.Model):
             self.topic_id = topic_id
         super().save(*args, **kwargs)
 
-    def __str__(self):
-        return f"{self.module.subject.name if self.module and self.module.subject else ''} -> {self.title}"
+    def __str__(self) -> str:
+        return f"{str(self.module.subject.name) if self.module and self.module.subject else ''} -> {str(self.title)}"
 
 
 class CodeExample(models.Model):
@@ -106,8 +106,8 @@ class CodeExample(models.Model):
     class Meta:
         ordering = ['order', 'id']
 
-    def __str__(self):
-        return f"{self.topic.title} - {self.label}"
+    def __str__(self) -> str:
+        return f"{str(self.topic.title)} - {str(self.label)}"
 
 
 class Problem(models.Model):
@@ -144,8 +144,8 @@ class Problem(models.Model):
     class Meta:
         ordering = ['order', 'id']
 
-    def __str__(self):
-        return f"{self.topic.title} - Lab #{self.order}: {self.title} [{self.language}]"
+    def __str__(self) -> str:
+        return f"{str(self.topic.title)} - Lab #{self.order}: {str(self.title)} [{str(self.language)}]"
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
@@ -166,8 +166,8 @@ class TopicImage(models.Model):
     class Meta:
         ordering = ['order', 'id']
 
-    def __str__(self):
-        return f"{self.topic.title} - Image #{self.order}"
+    def __str__(self) -> str:
+        return f"{str(self.topic.title)} - Image #{self.order}"
 
 
 class Batch(models.Model):
@@ -211,11 +211,11 @@ class Batch(models.Model):
         verbose_name_plural = "Batches"
 
     @property
-    def student_count(self):
-        return self.students.count()
+    def student_count(self) -> int:
+        return self.students.count()  # type: ignore[union-attr]
 
-    def __str__(self):
-        return f"{self.name} ({self.course.name}) - [{self.status}]"
+    def __str__(self) -> str:
+        return f"{str(self.name)} ({str(self.course.name)}) - [{str(self.status)}]"
 
 
 class BatchTopicProgress(models.Model):
@@ -237,9 +237,9 @@ class BatchTopicProgress(models.Model):
         unique_together = ('batch', 'topic')
         ordering = ['topic__order', 'id']
 
-    def __str__(self):
+    def __str__(self) -> str:
         status = "DONE" if self.is_completed else "PENDING"
-        return f"{self.batch.name} - {self.topic.title} [{status}]"
+        return f"{str(self.batch.name)} - {str(self.topic.title)} [{status}]"
 
 
 class StaffDailyLog(models.Model):
@@ -267,8 +267,8 @@ class StaffDailyLog(models.Model):
     class Meta:
         ordering = ['-date', '-created_at']
 
-    def __str__(self):
-        return f"{self.date} | {self.batch.name} | {self.session_type} ({self.students_attended}/{self.total_enrolled})"
+    def __str__(self) -> str:
+        return f"{self.date} | {str(self.batch.name)} | {str(self.session_type)} ({self.students_attended}/{self.total_enrolled})"
 
 
 class StudentAttendanceRecord(models.Model):
@@ -281,6 +281,35 @@ class StudentAttendanceRecord(models.Model):
     class Meta:
         unique_together = ('daily_log', 'student')
 
-    def __str__(self):
+    def __str__(self) -> str:
         p = "Present" if self.is_present else "Absent"
-        return f"{self.daily_log.date} - {self.student.username}: {p}"
+        student_name = str(self.student.username) if self.student else "Unknown"  # type: ignore[union-attr]
+        return f"{self.daily_log.date} - {student_name}: {p}"
+
+
+class PlatformCapability(models.Model):
+    """Feature/capability cards shown on the website homepage (e.g. '01 — Distributed Architecture')"""
+    objects = models.Manager()
+    number = models.CharField(
+        max_length=5,
+        help_text="Display number e.g. 01, 02, 03",
+        default="01"
+    )
+    title = models.CharField(max_length=200, help_text="Card heading")
+    description = models.TextField(help_text="Card body description shown on website")
+    icon = models.CharField(
+        max_length=50,
+        blank=True,
+        default="code",
+        help_text="Icon identifier: code, layers, terminal, award, cpu, shield, database"
+    )
+    order = models.PositiveIntegerField(default=1)
+    is_active = models.BooleanField(default=True, help_text="Uncheck to hide from website")
+
+    class Meta:
+        ordering = ['order', 'id']
+        verbose_name = "Platform Capability / Feature Card"
+        verbose_name_plural = "Platform Capabilities / Feature Cards"
+
+    def __str__(self) -> str:
+        return f"{str(self.number)} — {str(self.title)}"

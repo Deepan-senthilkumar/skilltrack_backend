@@ -7,12 +7,14 @@ from rest_framework.pagination import PageNumberPagination
 from apps.assignments.permissions import IsInstructor
 from .models import (
     Subject, Module, Topic, Problem, TopicImage,
-    Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord
+    Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord,
+    PlatformCapability
 )
 from .serializers import (
     SubjectSerializer, ModuleSerializer, TopicSerializer, ProblemSerializer,
     BatchSerializer, BatchTopicProgressSerializer, StaffDailyLogSerializer,
-    StudentAttendanceRecordSerializer, TopicImageSerializer
+    StudentAttendanceRecordSerializer, TopicImageSerializer,
+    PlatformCapabilitySerializer
 )
 
 
@@ -459,3 +461,11 @@ class ReportingAnalyticsView(views.APIView):
             'view_type': view_type,
             'logs': serialized_logs
         })
+
+
+# Public Website API: Platform Capabilities (Feature Cards)
+class PlatformCapabilityListView(generics.ListAPIView):
+    """Returns active capability/feature cards for the website homepage."""
+    queryset = PlatformCapability.objects.filter(is_active=True).order_by('order', 'id')
+    serializer_class = PlatformCapabilitySerializer
+    permission_classes = [permissions.AllowAny]

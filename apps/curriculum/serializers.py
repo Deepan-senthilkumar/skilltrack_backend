@@ -2,7 +2,8 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import (
     Subject, Module, Topic, CodeExample, Problem, TopicImage,
-    Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord
+    Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord,
+    PlatformCapability
 )
 
 User = get_user_model()
@@ -93,6 +94,7 @@ class SubjectSerializer(serializers.ModelSerializer):
     modules = ModuleSerializer(many=True, read_only=True)
     batch_count = serializers.SerializerMethodField()
     topic_count = serializers.SerializerMethodField()
+    module_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Subject
@@ -100,7 +102,7 @@ class SubjectSerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'description', 'short_description',
             'duration', 'schedule_type', 'level', 'icon', 'banner_image',
             'instructor_name', 'order', 'is_active', 'created_at',
-            'modules', 'batch_count', 'topic_count'
+            'modules', 'batch_count', 'topic_count', 'module_count'
         ]
 
     def create(self, validated_data):
@@ -143,6 +145,18 @@ class SubjectSerializer(serializers.ModelSerializer):
                     total += m.topics.count()
             return total
         return Topic.objects.filter(module__subject=obj).count()
+
+    def get_module_count(self, obj):
+        if hasattr(obj, '_prefetched_objects_cache') and 'modules' in obj._prefetched_objects_cache:
+            return len(obj.modules.all())
+        return obj.modules.count()
+
+
+# Platform Capability Serializer (Website Feature Cards)
+class PlatformCapabilitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PlatformCapability
+        fields = ['id', 'number', 'title', 'description', 'icon', 'order']
 
 
 # Batch Serializers

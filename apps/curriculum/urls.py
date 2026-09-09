@@ -8,7 +8,8 @@ from .views import (
     BatchListCreateView, BatchDetailView,
     BatchTopicProgressListView, BatchTopicProgressToggleView,
     StaffDailyLogListCreateView, StaffDailyLogDetailView,
-    DailyBatchMatrixView, ReportingAnalyticsView
+    DailyBatchMatrixView, ReportingAnalyticsView,
+    PlatformCapabilityListView
 )
 
 urlpatterns = [
@@ -52,4 +53,7 @@ urlpatterns = [
 
     # Multi-Dimensional Reports & Analytics
     path('reports/analytics/', ReportingAnalyticsView.as_view(), name='reporting-analytics'),
+
+    # Public Website APIs
+    path('platform/capabilities/', PlatformCapabilityListView.as_view(), name='platform-capabilities'),
 ]
