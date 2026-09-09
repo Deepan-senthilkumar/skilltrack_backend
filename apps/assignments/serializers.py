@@ -1,13 +1,18 @@
 from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from apps.curriculum.models import Problem, Batch
 from .models import ProblemAccess, Submission
-from apps.curriculum.models import Problem
+
+User = get_user_model()
 
 
 class ProblemAccessControlSerializer(serializers.ModelSerializer):
+    problem_title = serializers.CharField(source='problem.title', read_only=True)
+    is_active_now = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = ProblemAccess
-        fields = ['id', 'problem', 'is_unlocked', 'unlocked_at', 'deadline', 'allow_late_submission', 'batch_name']
-        read_only_fields = ['id']
+        fields = ['id', 'problem', 'problem_title', 'is_unlocked', 'unlocked_at', 'deadline', 'allow_late_submission', 'is_active_now']
 
 
 class ProblemAccessUpdateSerializer(serializers.Serializer):
@@ -24,32 +29,42 @@ class BulkModuleUnlockSerializer(serializers.Serializer):
 
 
 class SubmissionSubmitSerializer(serializers.Serializer):
-    submitted_code = serializers.CharField(required=True)
-    notes = serializers.CharField(required=False, allow_blank=True, default="")
+    code = serializers.CharField(required=True)
+    language = serializers.CharField(required=False, default='python')
+    batch_id = serializers.IntegerField(required=False, allow_null=True)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class TestRunSerializer(serializers.Serializer):
+    code = serializers.CharField(required=True)
+    language = serializers.CharField(required=False, default='python')
+    expected_output = serializers.CharField(required=False, allow_blank=True, default='')
 
 
 class SubmissionDetailSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(source='student.display_name', read_only=True)
     student_username = serializers.CharField(source='student.username', read_only=True)
-    student_email = serializers.CharField(source='student.email', read_only=True)
-    student_batch = serializers.CharField(source='student.batch_name', read_only=True)
     problem_title = serializers.CharField(source='problem.title', read_only=True)
     topic_title = serializers.CharField(source='problem.topic.title', read_only=True)
-    module_name = serializers.CharField(source='problem.topic.module.name', read_only=True)
-    max_points = serializers.IntegerField(source='problem.points', read_only=True)
-    reviewer_username = serializers.CharField(source='reviewed_by.username', read_only=True, allow_null=True)
+    course_name = serializers.CharField(source='problem.topic.module.subject.name', read_only=True)
+    batch_name = serializers.CharField(source='batch.name', read_only=True)
+    reviewed_by_name = serializers.CharField(source='reviewed_by.display_name', read_only=True)
 
     class Meta:
         model = Submission
         fields = [
-            'id', 'student', 'student_username', 'student_email', 'student_batch',
-            'problem', 'problem_title', 'topic_title', 'module_name', 'max_points',
-            'submitted_code', 'notes', 'status', 'score', 'staff_feedback',
-            'is_late', 'submitted_at', 'reviewed_at', 'reviewer_username'
+            'id', 'student', 'student_name', 'student_username',
+            'problem', 'problem_title', 'topic_title', 'course_name',
+            'batch', 'batch_name', 'language', 'submitted_code',
+            'actual_output', 'expected_output', 'is_passed', 'status',
+            'execution_time_ms', 'error_detail', 'attempt_number',
+            'notes', 'score', 'staff_feedback', 'submitted_at',
+            'reviewed_at', 'reviewed_by', 'reviewed_by_name'
         ]
-        read_only_fields = ['id', 'student', 'submitted_at', 'reviewed_at', 'reviewer_username']
+        read_only_fields = ['id', 'submitted_at', 'reviewed_at', 'reviewed_by_name']
 
 
 class ReviewSubmissionSerializer(serializers.Serializer):
-    status = serializers.ChoiceField(choices=['PASSED', 'REVISION_REQUESTED', 'REJECTED'])
-    score = serializers.IntegerField(min_value=0, required=False, allow_null=True)
-    staff_feedback = serializers.CharField(required=False, allow_blank=True, default="")
+    status = serializers.ChoiceField(choices=['PASSED', 'FAILED', 'REVISION_REQUESTED', 'SUBMITTED'])
+    score = serializers.IntegerField(required=False, allow_null=True)
+    staff_feedback = serializers.CharField(required=False, allow_blank=True)

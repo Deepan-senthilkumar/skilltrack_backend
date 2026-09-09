@@ -1,25 +1,27 @@
 from django.urls import path
 from .views import (
+    ProblemTestRunView,
+    ProblemSubmitSolutionView,
+    StudentMySubmissionsListView,
+    StaffSubmissionListView,
+    StaffSubmissionDetailView,
+    StaffReviewSubmissionView,
     StaffUpdateProblemAccessView,
     StaffBulkModuleUnlockView,
-    SubmitProblemSolutionView,
-    StaffSubmissionsListView,
-    StaffReviewSubmissionView,
-    StudentMySubmissionsView,
     StaffAnalyticsView,
-    TestRunCodeView,
 )
 
 urlpatterns = [
-    # Staff problem management
-    path('staff/problems/<int:pk>/access/', StaffUpdateProblemAccessView.as_view(), name='staff-problem-access'),
-    path('staff/modules/unlock/', StaffBulkModuleUnlockView.as_view(), name='staff-module-unlock'),
-    path('staff/submissions/', StaffSubmissionsListView.as_view(), name='staff-submissions-list'),
-    path('staff/submissions/<int:pk>/review/', StaffReviewSubmissionView.as_view(), name='staff-submission-review'),
-    path('staff/analytics/', StaffAnalyticsView.as_view(), name='staff-analytics'),
+    # Student Code Runner & Submissions
+    path('problems/<int:pk>/test-run/', ProblemTestRunView.as_view(), name='problem-test-run'),
+    path('problems/<int:pk>/submit/', ProblemSubmitSolutionView.as_view(), name='problem-submit'),
+    path('my-submissions/', StudentMySubmissionsListView.as_view(), name='my-submissions'),
 
-    # Student problem submission & automated test runner
-    path('problems/<int:pk>/test-run/', TestRunCodeView.as_view(), name='student-problem-test-run'),
-    path('problems/<int:pk>/submit/', SubmitProblemSolutionView.as_view(), name='student-problem-submit'),
-    path('my-submissions/', StudentMySubmissionsView.as_view(), name='student-my-submissions'),
+    # Staff / Admin Submissions Dashboard & Auto-Validation Inspector
+    path('staff/submissions/', StaffSubmissionListView.as_view(), name='staff-submission-list'),
+    path('staff/submissions/<int:pk>/', StaffSubmissionDetailView.as_view(), name='staff-submission-detail'),
+    path('staff/submissions/<int:pk>/review/', StaffReviewSubmissionView.as_view(), name='staff-review-submission'),
+    path('staff/problems/<int:pk>/access/', StaffUpdateProblemAccessView.as_view(), name='staff-problem-access'),
+    path('staff/modules/unlock/', StaffBulkModuleUnlockView.as_view(), name='staff-bulk-module-unlock'),
+    path('staff/analytics/', StaffAnalyticsView.as_view(), name='staff-analytics'),
 ]

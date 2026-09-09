@@ -7,20 +7,64 @@ User = get_user_model()
 
 
 class UserSerializer(serializers.ModelSerializer):
+    is_admin = serializers.BooleanField(read_only=True)
     is_instructor = serializers.BooleanField(read_only=True)
+    is_student = serializers.BooleanField(read_only=True)
     display_name = serializers.CharField(read_only=True)
     assigned_subject_name = serializers.CharField(source='assigned_subject.name', read_only=True)
     assigned_subject_slug = serializers.CharField(source='assigned_subject.slug', read_only=True)
+    assigned_batches_list = serializers.SerializerMethodField()
+    enrolled_batches_list = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name', 'display_name',
             'role', 'mobile_number', 'pin_code', 'assigned_subject',
-            'assigned_subject_name', 'assigned_subject_slug', 'is_instructor',
-            'is_admin_role', 'batch_name', 'avatar_url', 'date_joined'
+            'assigned_subject_name', 'assigned_subject_slug', 'is_admin',
+            'is_instructor', 'is_student', 'is_admin_role', 'batch_name',
+            'avatar_url', 'bio', 'is_active', 'is_active_account', 'date_joined',
+            'assigned_batches_list', 'enrolled_batches_list'
         ]
-        read_only_fields = ['id', 'date_joined', 'is_instructor', 'display_name']
+        read_only_fields = ['id', 'date_joined', 'is_admin', 'is_instructor', 'is_student', 'display_name']
+
+    def get_assigned_batches_list(self, obj):
+        if hasattr(obj, 'assigned_batches'):
+            return [{'id': b.id, 'name': b.name, 'course_name': b.course.name} for b in obj.assigned_batches.all()]
+        return []
+
+    def get_enrolled_batches_list(self, obj):
+        if hasattr(obj, 'enrolled_batches'):
+            return [{'id': b.id, 'name': b.name, 'course_name': b.course.name, 'schedule': b.schedule} for b in obj.enrolled_batches.all()]
+        return []
+
+
+class AdminUserManageSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True, min_length=4)
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'username', 'email', 'first_name', 'last_name', 'role',
+            'mobile_number', 'pin_code', 'assigned_subject', 'is_admin_role',
+            'batch_name', 'avatar_url', 'bio', 'is_active', 'is_active_account', 'password'
+        ]
+
+    def create(self, validated_data):
+        password = validated_data.pop('password', None) or validated_data.get('pin_code') or 'kalari123'
+        user = User.objects.create(**validated_data)
+        user.set_password(password)
+        user.save()
+        return user
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance
 
 
 class StudentRegisterSerializer(serializers.Serializer):
@@ -76,7 +120,7 @@ class StaffUserCreateSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'username', 'email', 'password', 'first_name',
-            'last_name', 'assigned_subject_id', 'is_admin_role'
+            'last_name', 'assigned_subject', 'assigned_subject_id', 'is_admin_role', 'mobile_number', 'bio'
         ]
 
     def create(self, validated_data):
@@ -94,7 +138,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Make standard username/password optional if identifier/secret provided
         self.fields['username'].required = False
         self.fields['password'].required = False
 
@@ -121,7 +164,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not user.check_password(secret) and user.pin_code != secret:
             raise serializers.ValidationError("Incorrect PIN or password. Please verify and try again.")
 
-        if not user.is_active:
+        if not user.is_active or not getattr(user, 'is_active_account', True):
             raise serializers.ValidationError("This account has been deactivated.")
 
         # Generate tokens
@@ -139,7 +182,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['username', 'email', 'password', 'first_name', 'last_name', 'role', 'batch_name']
+        fields = ['username', 'email', 'password', 'first_name', 'last_name', 'role', 'batch_name', 'mobile_number']
 
     def create(self, validated_data):
         password = validated_data.pop('password')
