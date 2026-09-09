@@ -37,65 +37,65 @@ class SubjectDetailView(generics.RetrieveAPIView):
 
 
 class StaffSubjectListCreateView(generics.ListCreateAPIView):
-    queryset = Subject.objects.all().order_by('order', 'id')
+    queryset = Subject.objects.all().prefetch_related('modules__topics', 'batches').order_by('order', 'id')
     serializer_class = SubjectSerializer
     permission_classes = [IsInstructor]
 
 
 class StaffSubjectDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Subject.objects.all()
+    queryset = Subject.objects.all().prefetch_related('modules__topics', 'batches')
     serializer_class = SubjectSerializer
     permission_classes = [IsInstructor]
 
 
 # Module Views
 class StaffModuleListCreateView(generics.ListCreateAPIView):
-    queryset = Module.objects.all().order_by('order', 'id')
+    queryset = Module.objects.all().select_related('subject').prefetch_related('topics').order_by('order', 'id')
     serializer_class = ModuleSerializer
     permission_classes = [IsInstructor]
 
 
 class StaffModuleDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Module.objects.all()
+    queryset = Module.objects.all().select_related('subject').prefetch_related('topics')
     serializer_class = ModuleSerializer
     permission_classes = [IsInstructor]
 
 
 # Topic Views
 class TopicDetailView(generics.RetrieveAPIView):
-    queryset = Topic.objects.all().prefetch_related('problems', 'examples')
+    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems', 'examples')
     serializer_class = TopicSerializer
     lookup_field = 'topic_id'
     permission_classes = [permissions.AllowAny]
 
 
 class StaffTopicListCreateView(generics.ListCreateAPIView):
-    queryset = Topic.objects.all().order_by('order', 'id')
+    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems', 'examples').order_by('order', 'id')
     serializer_class = TopicSerializer
     permission_classes = [IsInstructor]
 
 
 class StaffTopicDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Topic.objects.all()
+    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems', 'examples')
     serializer_class = TopicSerializer
     permission_classes = [IsInstructor]
 
 
 # Problem Views
 class ProblemDetailView(generics.RetrieveAPIView):
-    queryset = Problem.objects.all()
+    queryset = Problem.objects.all().select_related('topic__module__subject')
     serializer_class = ProblemSerializer
     permission_classes = [permissions.AllowAny]
 
 
 class StaffProblemListCreateView(generics.ListCreateAPIView):
-    queryset = Problem.objects.all().order_by('order', 'id')
+    queryset = Problem.objects.all().select_related('topic__module__subject').order_by('order', 'id')
     serializer_class = ProblemSerializer
     permission_classes = [IsInstructor]
 
 
 class StaffProblemDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Problem.objects.all()
+    queryset = Problem.objects.all().select_related('topic__module__subject')
     serializer_class = ProblemSerializer
     permission_classes = [IsInstructor]
 
@@ -103,24 +103,26 @@ class StaffProblemDetailView(generics.RetrieveUpdateDestroyAPIView):
 # Batch Views
 class BatchListCreateView(generics.ListCreateAPIView):
     serializer_class = BatchSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsInstructor]
 
     def get_queryset(self):
         user = self.request.user
         queryset = Batch.objects.all().select_related('course').prefetch_related('staff', 'students', 'topic_progress')
 
-        if user.is_admin:
-            pass  # Admin sees all
-        elif user.is_instructor:
-            queryset = queryset.filter(staff=user)
-        else:
-            queryset = queryset.filter(students=user)
+        if user and user.is_authenticated:
+            if getattr(user, 'is_admin', False) or getattr(user, 'is_superuser', False):
+                pass  # Admin sees all
+            elif getattr(user, 'is_instructor', False):
+                queryset = queryset.filter(staff=user)
+            else:
+                queryset = queryset.filter(students=user)
 
-        course_id = self.request.query_params.get('course')
+        query_params = getattr(self.request, 'query_params', self.request.GET if hasattr(self.request, 'GET') else {})
+        course_id = query_params.get('course')
         if course_id:
             queryset = queryset.filter(course_id=course_id)
 
-        status_param = self.request.query_params.get('status')
+        status_param = query_params.get('status')
         if status_param:
             queryset = queryset.filter(status=status_param.upper())
 

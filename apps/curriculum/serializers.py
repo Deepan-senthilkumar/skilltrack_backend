@@ -30,6 +30,7 @@ class CodeExampleSerializer(serializers.ModelSerializer):
 
 
 class TopicSerializer(serializers.ModelSerializer):
+    topic_id = serializers.SlugField(required=False, allow_blank=True, validators=[])
     problems = ProblemSerializer(many=True, read_only=True)
     examples = CodeExampleSerializer(many=True, read_only=True)
     module_name = serializers.CharField(source='module.name', read_only=True)
@@ -44,6 +45,31 @@ class TopicSerializer(serializers.ModelSerializer):
             'problems', 'examples'
         ]
 
+    def create(self, validated_data):
+        from django.utils.text import slugify
+        base_slug = validated_data.get('topic_id') or slugify(validated_data.get('title', 'topic')) or 'topic'
+        topic_id = base_slug
+        counter = 1
+        while Topic.objects.filter(topic_id=topic_id).exists():
+            topic_id = f"{base_slug}-{counter}"
+            counter += 1
+        validated_data['topic_id'] = topic_id
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        from django.utils.text import slugify
+        if 'topic_id' in validated_data and validated_data['topic_id']:
+            base_slug = validated_data['topic_id']
+        else:
+            base_slug = instance.topic_id or slugify(validated_data.get('title', instance.title))
+        topic_id = base_slug
+        counter = 1
+        while Topic.objects.filter(topic_id=topic_id).exclude(pk=instance.pk).exists():
+            topic_id = f"{base_slug}-{counter}"
+            counter += 1
+        validated_data['topic_id'] = topic_id
+        return super().update(instance, validated_data)
+
 
 class ModuleSerializer(serializers.ModelSerializer):
     topics = TopicSerializer(many=True, read_only=True)
@@ -55,6 +81,7 @@ class ModuleSerializer(serializers.ModelSerializer):
 
 
 class SubjectSerializer(serializers.ModelSerializer):
+    slug = serializers.SlugField(required=False, allow_blank=True, validators=[])
     modules = ModuleSerializer(many=True, read_only=True)
     batch_count = serializers.SerializerMethodField()
     topic_count = serializers.SerializerMethodField()
@@ -68,10 +95,45 @@ class SubjectSerializer(serializers.ModelSerializer):
             'modules', 'batch_count', 'topic_count'
         ]
 
+    def create(self, validated_data):
+        from django.utils.text import slugify
+        base_slug = validated_data.get('slug') or slugify(validated_data.get('name', 'subject')) or 'subject'
+        slug = base_slug
+        counter = 1
+        while Subject.objects.filter(slug=slug).exists():
+            slug = f"{base_slug}-{counter}"
+            counter += 1
+        validated_data['slug'] = slug
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        from django.utils.text import slugify
+        if 'slug' in validated_data and validated_data['slug']:
+            base_slug = validated_data['slug']
+        else:
+            base_slug = instance.slug or slugify(validated_data.get('name', instance.name))
+        slug = base_slug
+        counter = 1
+        while Subject.objects.filter(slug=slug).exclude(pk=instance.pk).exists():
+            slug = f"{base_slug}-{counter}"
+            counter += 1
+        validated_data['slug'] = slug
+        return super().update(instance, validated_data)
+
     def get_batch_count(self, obj):
+        if hasattr(obj, '_prefetched_objects_cache') and 'batches' in obj._prefetched_objects_cache:
+            return len(obj.batches.all())
         return obj.batches.count()
 
     def get_topic_count(self, obj):
+        if hasattr(obj, '_prefetched_objects_cache') and 'modules' in obj._prefetched_objects_cache:
+            total = 0
+            for m in obj.modules.all():
+                if hasattr(m, '_prefetched_objects_cache') and 'topics' in m._prefetched_objects_cache:
+                    total += len(m.topics.all())
+                else:
+                    total += m.topics.count()
+            return total
         return Topic.objects.filter(module__subject=obj).count()
 
 

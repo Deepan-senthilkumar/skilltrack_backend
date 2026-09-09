@@ -158,28 +158,30 @@ class StaffSubmissionListView(generics.ListAPIView):
             'student', 'problem__topic__module__subject', 'batch', 'reviewed_by'
         ).order_by('-submitted_at')
 
+        query_params = getattr(self.request, 'query_params', self.request.GET if hasattr(self.request, 'GET') else {})
+
         # Filter by Batch
-        batch_id = self.request.query_params.get('batch')
+        batch_id = query_params.get('batch')
         if batch_id:
             queryset = queryset.filter(batch_id=batch_id)
 
         # Filter by Course
-        course_id = self.request.query_params.get('course')
+        course_id = query_params.get('course')
         if course_id:
             queryset = queryset.filter(problem__topic__module__subject_id=course_id)
 
         # Filter by Student
-        student_id = self.request.query_params.get('student')
+        student_id = query_params.get('student')
         if student_id:
             queryset = queryset.filter(student_id=student_id)
 
         # Filter by Problem
-        problem_id = self.request.query_params.get('problem')
+        problem_id = query_params.get('problem')
         if problem_id:
             queryset = queryset.filter(problem_id=problem_id)
 
         # Filter by Status (PASSED, FAILED, COMPILE_ERROR, RUNTIME_ERROR)
-        status_param = self.request.query_params.get('status')
+        status_param = query_params.get('status')
         if status_param:
             queryset = queryset.filter(status=status_param.upper())
 

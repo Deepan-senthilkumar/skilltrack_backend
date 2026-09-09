@@ -28,6 +28,18 @@ class Subject(models.Model):
         verbose_name = "Course / Subject"
         verbose_name_plural = "Courses / Subjects"
 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            from django.utils.text import slugify
+            base_slug = slugify(self.name) or "subject"
+            slug = base_slug
+            counter = 1
+            while Subject.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+                slug = f"{base_slug}-{counter}"
+                counter += 1
+            self.slug = slug
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.name
 
@@ -56,7 +68,7 @@ class Module(models.Model):
 class Topic(models.Model):
     objects = models.Manager()
     module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name='topics')
-    topic_id = models.SlugField(max_length=100, unique=True)
+    topic_id = models.SlugField(max_length=100, unique=True, blank=True)
     title = models.CharField(max_length=255)
     explain = models.JSONField(default=list, blank=True, help_text="List of explanation points/paragraphs")
     notes_content = models.TextField(blank=True, default="", help_text="Rich markdown/text study notes for the topic")
@@ -64,6 +76,18 @@ class Topic(models.Model):
 
     class Meta:
         ordering = ['module__order', 'order', 'id']
+
+    def save(self, *args, **kwargs):
+        if not self.topic_id:
+            from django.utils.text import slugify
+            base_slug = slugify(self.title) or "topic"
+            topic_id = base_slug
+            counter = 1
+            while Topic.objects.filter(topic_id=topic_id).exclude(pk=self.pk).exists():
+                topic_id = f"{base_slug}-{counter}"
+                counter += 1
+            self.topic_id = topic_id
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.module.subject.name if self.module and self.module.subject else ''} -> {self.title}"
@@ -86,17 +110,22 @@ class CodeExample(models.Model):
 class Problem(models.Model):
     objects = models.Manager()
     LANGUAGE_CHOICES = (
-        ('python', 'Python'),
+        ('python', 'Python 3'),
         ('c', 'C Programming'),
         ('javascript', 'JavaScript (Node.js)'),
         ('cpp', 'C++'),
         ('java', 'Java'),
+        ('excel', 'MS Excel / Spreadsheet Task'),
+        ('word', 'MS Word & Documentation Task'),
+        ('tally', 'Tally Prime / Accounting Entry'),
+        ('sql', 'SQL & Database Query'),
+        ('general', 'General Practical Exercise / Task'),
     )
 
     topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name='problems')
     title = models.CharField(max_length=255)
     description = models.TextField(help_text="Detailed problem statement & instructions")
-    language = models.CharField(max_length=20, choices=LANGUAGE_CHOICES, default='python')
+    language = models.CharField(max_length=30, choices=LANGUAGE_CHOICES, default='python')
     expected_output = models.TextField(
         blank=True,
         default="",

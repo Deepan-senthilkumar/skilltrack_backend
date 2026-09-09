@@ -70,8 +70,10 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'kalari_backend.wsgi.application'
 
-# Database Configuration (Supabase PostgreSQL via DATABASE_URL or SQLite fallback)
-DATABASE_URL = os.environ.get('DATABASE_URL')
+# Database Configuration (Default to live Supabase PostgreSQL Cloud DB)
+DEFAULT_SUPABASE_DB = 'postgresql://postgres.ystzefjfudtqgrzlcgmb:%26Deep%40n3434%24@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require'
+DATABASE_URL = os.environ.get('DATABASE_URL') or DEFAULT_SUPABASE_DB
+
 if DATABASE_URL:
     DATABASES = {
         'default': dj_database_url.config(

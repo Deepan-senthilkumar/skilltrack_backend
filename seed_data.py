@@ -6,14 +6,12 @@ django.setup()
 
 from django.utils import timezone
 from datetime import timedelta, date
-from django.contrib.auth import get_user_model
+from apps.users.models import User
 from apps.curriculum.models import (
     Subject, Module, Topic, Problem, CodeExample,
     Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord
 )
 from apps.assignments.models import Submission, ProblemAccess
-
-User = get_user_model()
 
 
 def seed():
@@ -31,12 +29,14 @@ def seed():
             'is_superuser': True,
             'is_admin_role': True,
             'mobile_number': '9999900000',
-            'pin_code': '9999'
+            'pin_code': '0912'
         }
     )
-    admin.set_password('admin123')
+    admin.email = 'admin@skillstack.com'
+    admin.pin_code = '0912'
+    admin.set_password('0912')
     admin.save()
-    print(f"[OK] Admin user: admin / admin123")
+    print(f"[OK] Master Admin user: admin@skillstack.com / 0912")
 
     trainer1, _ = User.objects.get_or_create(
         username='trainer1',
@@ -159,7 +159,49 @@ def seed():
             'order': 3
         }
     )
-    print("[OK] Courses created (C, Python, Django)")
+
+    excel_course, _ = Subject.objects.get_or_create(
+        slug='advanced-ms-excel',
+        defaults={
+            'name': 'Advanced MS Excel & Data Analytics',
+            'description': 'Master formulas (VLOOKUP, XLOOKUP, INDEX-MATCH), Pivot Tables, Conditional Formatting, Data Visualization, and Dashboards.',
+            'short_description': 'Industry-standard spreadsheet mastery, business formulas & data automation.',
+            'duration': '4 Weeks',
+            'schedule_type': 'Mon to Fri Daily Practical Labs',
+            'level': 'Beginner to Advanced',
+            'icon': 'excel',
+            'order': 4
+        }
+    )
+
+    word_course, _ = Subject.objects.get_or_create(
+        slug='ms-word-office',
+        defaults={
+            'name': 'MS Word & Professional Office Documentation',
+            'description': 'Official document formatting, mail merge, tables, typography styles, cover letters, invoices, and executive reports.',
+            'short_description': 'Essential workplace documentation, formatting and official publishing.',
+            'duration': '3 Weeks',
+            'schedule_type': '3 days class + 2 days lab per week',
+            'level': 'Beginner to Intermediate',
+            'icon': 'word',
+            'order': 5
+        }
+    )
+
+    tally_course, _ = Subject.objects.get_or_create(
+        slug='tally-prime-accounting',
+        defaults={
+            'name': 'Tally Prime & GST Accounting',
+            'description': 'Computerized accounting, voucher entry, inventory management, GST computation, balance sheets, and audit reports.',
+            'short_description': 'Complete business accounting & computerized GST tax compliance.',
+            'duration': '6 Weeks',
+            'schedule_type': 'Mon, Wed, Fri - 10:00 AM to 12:00 PM',
+            'level': 'Beginner to Advanced',
+            'icon': 'tally',
+            'order': 6
+        }
+    )
+    print("[OK] Courses created (C, Python, Django, Advanced Excel, MS Word, Tally Prime)")
 
     # 3. Modules, Topics & Practice Programs for C Programming
     mod_c1, _ = Module.objects.get_or_create(
@@ -318,6 +360,105 @@ print(res)
 """,
             'points': 10,
             'order': 2
+        }
+    )
+
+    # 4b. Modules & Practical Labs for Advanced MS Excel
+    mod_xl1, _ = Module.objects.get_or_create(
+        subject=excel_course,
+        name='Module 1: Advanced Formulas & Lookup Functions',
+        defaults={'level': 'intermediate', 'order': 1}
+    )
+
+    top_xl1, _ = Topic.objects.get_or_create(
+        module=mod_xl1,
+        topic_id='excel-vlookup-xlookup',
+        defaults={
+            'title': 'VLOOKUP, XLOOKUP & Dynamic Data Search',
+            'explain': [
+                'Syntax of VLOOKUP(lookup_value, table_array, col_index_num, [range_lookup]).',
+                'Using modern XLOOKUP for two-way lookups with exact and approximate matching.',
+                'Handling #N/A errors with IFERROR and IFNA functions.'
+            ],
+            'notes_content': """# Advanced Excel Lookups: VLOOKUP & XLOOKUP
+
+Lookup functions search for a specific value in a dataset table and return a corresponding value from another column.
+
+### 1. VLOOKUP Formula Syntax:
+```excel
+=VLOOKUP(lookup_value, table_range, column_index, FALSE)
+```
+- `lookup_value`: Cell value to search (e.g., Employee ID `E104`)
+- `table_range`: Selected reference data table (e.g., `A2:D50`)
+- `column_index`: Number of the column from which to fetch data (e.g., `3` for Salary)
+- `FALSE`: Exact match requirement
+
+### 2. XLOOKUP Modern Formula:
+```excel
+=XLOOKUP(lookup_value, lookup_array, return_array, [if_not_found])
+```
+*Example:* `=XLOOKUP(G2, A2:A100, D2:D100, "Employee Not Found")`
+""",
+            'order': 1
+        }
+    )
+
+    prob_xl1, _ = Problem.objects.get_or_create(
+        topic=top_xl1,
+        title='Lab Task 1: Salary & Department Lookup Matrix',
+        defaults={
+            'description': 'Construct an automated VLOOKUP formula to retrieve employee designation and monthly CTC from the master payroll table. Expected result output must verify formula integrity.',
+            'language': 'excel',
+            'expected_output': "LOOKUP_RESULT: Designation=Senior Data Analyst | CTC=₹85,000 | Status=VERIFIED",
+            'expected_output_hint': 'Use =VLOOKUP(E2, A2:D20, 3, FALSE)',
+            'starter_code': '=VLOOKUP(E2, A2:D20, 3, FALSE)',
+            'points': 10,
+            'order': 1
+        }
+    )
+
+    # 4c. Modules & Practical Labs for MS Word & Documentation
+    mod_wd1, _ = Module.objects.get_or_create(
+        subject=word_course,
+        name='Module 1: Mail Merge & Executive Templates',
+        defaults={'level': 'beginner', 'order': 1}
+    )
+
+    top_wd1, _ = Topic.objects.get_or_create(
+        module=mod_wd1,
+        topic_id='word-mail-merge',
+        defaults={
+            'title': 'Mail Merge Automation & Bulk Certificate Generation',
+            'explain': [
+                'Connecting Excel data source list to Word document.',
+                'Inserting merge fields: <<First_Name>>, <<Course_Name>>, <<Grade>>.',
+                'Generating individual PDF letters and print batches.'
+            ],
+            'notes_content': """# MS Word Mail Merge Masterclass
+
+Mail Merge allows generating personalized documents (appointment letters, certificates, invoices) in bulk by linking a master Word document to an Excel database.
+
+### Step-by-Step Workflow:
+1. Open Word -> Go to **Mailings** Tab -> **Start Mail Merge** -> Select **Letters / Envelopes**.
+2. Click **Select Recipients** -> **Use an Existing List** -> Choose your `students_list.xlsx` sheet.
+3. Click **Insert Merge Field** to place dynamic tokens: `<<Student_Name>>`, `<<Batch_Name>>`, `<<Issue_Date>>`.
+4. Preview results and click **Finish & Merge** -> **Edit Individual Documents**.
+""",
+            'order': 1
+        }
+    )
+
+    prob_wd1, _ = Problem.objects.get_or_create(
+        topic=top_wd1,
+        title='Lab Task 1: Official Course Completion Certificate Template',
+        defaults={
+            'description': 'Configure a Word Mail Merge template with <<Student_Name>>, <<Course>>, and <<Completion_Date>> tokens linked to the candidate Excel data sheet.',
+            'language': 'word',
+            'expected_output': "MAIL_MERGE_STATUS: Fields=<<Student_Name>>,<<Course>>,<<Date>> | Records_Merged=30 | Status=PASSED",
+            'expected_output_hint': 'Insert merge fields into the certificate template',
+            'starter_code': '<<Student_Name>> has successfully completed <<Course>> on <<Date>>.',
+            'points': 10,
+            'order': 1
         }
     )
 
