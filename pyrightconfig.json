@@ -6,5 +6,7 @@
   "useLibraryCodeForTypes": true,
   "reportMissingModuleSource": "none",
   "reportAttributeAccessIssue": "none",
-  "reportMissingTypeStubs": "none"
+  "reportMissingTypeStubs": "none",
+  "reportIncompatibleVariableOverride": "none",
+  "reportIncompatibleMethodOverride": "none"
 }
