@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import (
-    Subject, Module, Topic, CodeExample, Problem,
+    Subject, Module, Topic, CodeExample, Problem, TopicImage,
     Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord
 )
 
@@ -29,10 +29,18 @@ class CodeExampleSerializer(serializers.ModelSerializer):
         fields = ['id', 'topic', 'label', 'code', 'order']
 
 
+class TopicImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TopicImage
+        fields = ['id', 'topic', 'image_url', 'caption', 'order', 'uploaded_at']
+        read_only_fields = ['id', 'uploaded_at']
+
+
 class TopicSerializer(serializers.ModelSerializer):
     topic_id = serializers.SlugField(required=False, allow_blank=True, validators=[])
     problems = ProblemSerializer(many=True, read_only=True)
     examples = CodeExampleSerializer(many=True, read_only=True)
+    images = TopicImageSerializer(many=True, read_only=True)
     module_name = serializers.CharField(source='module.name', read_only=True)
     subject_id = serializers.IntegerField(source='module.subject.id', read_only=True)
     subject_name = serializers.CharField(source='module.subject.name', read_only=True)
@@ -42,7 +50,7 @@ class TopicSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'module', 'module_name', 'subject_id', 'subject_name',
             'topic_id', 'title', 'explain', 'notes_content', 'order',
-            'problems', 'examples'
+            'problems', 'examples', 'images'
         ]
 
     def create(self, validated_data):

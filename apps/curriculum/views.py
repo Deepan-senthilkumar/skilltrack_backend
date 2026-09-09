@@ -6,13 +6,13 @@ from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from apps.assignments.permissions import IsInstructor
 from .models import (
-    Subject, Module, Topic, Problem,
+    Subject, Module, Topic, Problem, TopicImage,
     Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord
 )
 from .serializers import (
     SubjectSerializer, ModuleSerializer, TopicSerializer, ProblemSerializer,
     BatchSerializer, BatchTopicProgressSerializer, StaffDailyLogSerializer,
-    StudentAttendanceRecordSerializer
+    StudentAttendanceRecordSerializer, TopicImageSerializer
 )
 
 
@@ -24,13 +24,13 @@ class StandardResultsSetPagination(PageNumberPagination):
 
 # Subject / Course Views
 class SubjectListView(generics.ListAPIView):
-    queryset = Subject.objects.filter(is_active=True).prefetch_related('modules__topics__problems')
+    queryset = Subject.objects.filter(is_active=True).prefetch_related('modules__topics__problems', 'modules__topics__images')
     serializer_class = SubjectSerializer
     permission_classes = [permissions.AllowAny]
 
 
 class SubjectDetailView(generics.RetrieveAPIView):
-    queryset = Subject.objects.all().prefetch_related('modules__topics__problems')
+    queryset = Subject.objects.all().prefetch_related('modules__topics__problems', 'modules__topics__images')
     serializer_class = SubjectSerializer
     lookup_field = 'slug'
     permission_classes = [permissions.AllowAny]
@@ -63,22 +63,105 @@ class StaffModuleDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 # Topic Views
 class TopicDetailView(generics.RetrieveAPIView):
-    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems', 'examples')
+    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems', 'examples', 'images')
     serializer_class = TopicSerializer
     lookup_field = 'topic_id'
     permission_classes = [permissions.AllowAny]
 
 
 class StaffTopicListCreateView(generics.ListCreateAPIView):
-    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems', 'examples').order_by('order', 'id')
+    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems', 'examples', 'images').order_by('order', 'id')
     serializer_class = TopicSerializer
     permission_classes = [IsInstructor]
 
 
 class StaffTopicDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems', 'examples')
+    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems', 'examples', 'images')
     serializer_class = TopicSerializer
     permission_classes = [IsInstructor]
+
+
+# Topic Image Upload / Delete Views
+class TopicImageUploadView(views.APIView):
+    permission_classes = [IsInstructor]
+
+    def post(self, request, topic_id):
+        import requests as http_requests
+        import uuid
+        import os
+
+        SUPABASE_URL = "https://ystzefjfudtqgrzlcgmb.supabase.co"
+        SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlzdHplZmpmdWR0cWdyemxjZ21iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3OTcwODUsImV4cCI6MjEwNDM3MzA4NX0.0WQh2s3q9-8I-CsZJ8zW2C8Pd3pWa7-0sKfLzcEso78"
+        BUCKET = "topic-images"
+
+        try:
+            topic = Topic.objects.get(pk=topic_id)
+        except Topic.DoesNotExist:
+            return Response({'error': 'Topic not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        image_file = request.FILES.get('image')
+        if not image_file:
+            return Response({'error': 'No image file provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+        caption = request.data.get('caption', '')
+        order = int(request.data.get('order', TopicImage.objects.filter(topic=topic).count() + 1))
+
+        # Generate unique filename
+        ext = os.path.splitext(image_file.name)[1].lower() or '.jpg'
+        filename = f"topic-{topic_id}/{uuid.uuid4().hex}{ext}"
+
+        # Upload to Supabase Storage
+        upload_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{filename}"
+        headers = {
+            'Authorization': f'Bearer {SUPABASE_ANON_KEY}',
+            'apikey': SUPABASE_ANON_KEY,
+            'Content-Type': image_file.content_type or 'image/jpeg',
+        }
+
+        upload_response = http_requests.post(
+            upload_url,
+            headers=headers,
+            data=image_file.read(),
+        )
+
+        if upload_response.status_code not in (200, 201):
+            return Response(
+                {'error': 'Failed to upload to Supabase Storage', 'detail': upload_response.text},
+                status=status.HTTP_502_BAD_GATEWAY
+            )
+
+        # Build public URL
+        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{filename}"
+
+        img = TopicImage.objects.create(
+            topic=topic,
+            image_url=public_url,
+            caption=caption,
+            order=order
+        )
+
+        return Response(TopicImageSerializer(img).data, status=status.HTTP_201_CREATED)
+
+
+class TopicImageDeleteView(views.APIView):
+    permission_classes = [IsInstructor]
+
+    def delete(self, request, pk):
+        try:
+            img = TopicImage.objects.get(pk=pk)
+        except TopicImage.DoesNotExist:
+            return Response({'error': 'Image not found'}, status=status.HTTP_404_NOT_FOUND)
+        img.delete()
+        return Response({'status': 'deleted'}, status=status.HTTP_200_OK)
+
+
+class TopicImageListView(generics.ListAPIView):
+    serializer_class = TopicImageSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        topic_id = self.kwargs.get('topic_id')
+        return TopicImage.objects.filter(topic_id=topic_id).order_by('order', 'id')
 
 
 # Problem Views

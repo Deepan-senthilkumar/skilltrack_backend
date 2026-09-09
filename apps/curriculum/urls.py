@@ -3,6 +3,7 @@ from .views import (
     SubjectListView, SubjectDetailView, StaffSubjectListCreateView, StaffSubjectDetailView,
     StaffModuleListCreateView, StaffModuleDetailView,
     TopicDetailView, StaffTopicListCreateView, StaffTopicDetailView,
+    TopicImageUploadView, TopicImageDeleteView, TopicImageListView,
     ProblemDetailView, StaffProblemListCreateView, StaffProblemDetailView,
     BatchListCreateView, BatchDetailView,
     BatchTopicProgressListView, BatchTopicProgressToggleView,
@@ -25,6 +26,11 @@ urlpatterns = [
     path('curriculum/topics/<slug:topic_id>/', TopicDetailView.as_view(), name='topic-detail'),
     path('staff/topics/', StaffTopicListCreateView.as_view(), name='staff-topic-list-create'),
     path('staff/topics/<int:pk>/', StaffTopicDetailView.as_view(), name='staff-topic-detail'),
+
+    # Topic Images
+    path('staff/topics/<int:topic_id>/images/', TopicImageUploadView.as_view(), name='topic-image-upload'),
+    path('staff/topics/<int:topic_id>/images/list/', TopicImageListView.as_view(), name='topic-image-list'),
+    path('staff/topic-images/<int:pk>/delete/', TopicImageDeleteView.as_view(), name='topic-image-delete'),
 
     # Problems (Practice Programs)
     path('curriculum/problems/<int:pk>/', ProblemDetailView.as_view(), name='problem-detail'),

@@ -2,6 +2,9 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 
+SUPABASE_URL = "https://ystzefjfudtqgrzlcgmb.supabase.co"
+SUPABASE_STORAGE_BUCKET = "topic-images"
+
 
 class Subject(models.Model):
     objects = models.Manager()
@@ -150,6 +153,21 @@ class Problem(models.Model):
         if is_new:
             from apps.assignments.models import ProblemAccess
             ProblemAccess.objects.get_or_create(problem=self)
+
+
+class TopicImage(models.Model):
+    objects = models.Manager()
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name='images')
+    image_url = models.TextField(help_text="Public Supabase Storage URL of the uploaded image")
+    caption = models.CharField(max_length=300, blank=True, default="", help_text="Optional caption shown below image")
+    order = models.PositiveIntegerField(default=1)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        return f"{self.topic.title} - Image #{self.order}"
 
 
 class Batch(models.Model):

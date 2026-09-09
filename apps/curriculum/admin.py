@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import (
-    Subject, Module, Topic, CodeExample, Problem,
+    Subject, Module, Topic, CodeExample, Problem, TopicImage,
     Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord
 )
 
@@ -42,19 +42,25 @@ class StudentAttendanceRecordAdmin(admin.ModelAdmin):
     search_fields = ('student__username', 'daily_log__batch__name')
 
 
-class TopicInline(admin.TabularInline):
-    model = Topic
-    extra = 1
+class TopicImageInline(admin.TabularInline):
+    model = TopicImage
+    extra = 0
+    fields = ('image_url', 'caption', 'order')
 
 
 class CodeExampleInline(admin.StackedInline):
     model = CodeExample
-    extra = 1
+    extra = 0
 
 
 class ProblemInline(admin.StackedInline):
     model = Problem
-    extra = 1
+    extra = 0
+
+
+class TopicInline(admin.TabularInline):
+    model = Topic
+    extra = 0
 
 
 @admin.register(Module)
@@ -69,7 +75,14 @@ class TopicAdmin(admin.ModelAdmin):
     list_display = ('title', 'topic_id', 'module', 'order')
     list_filter = ('module__level', 'module', 'module__subject')
     search_fields = ('title', 'topic_id')
-    inlines = [CodeExampleInline, ProblemInline]
+    inlines = [TopicImageInline, CodeExampleInline, ProblemInline]
+
+
+@admin.register(TopicImage)
+class TopicImageAdmin(admin.ModelAdmin):
+    list_display = ('topic', 'caption', 'order', 'uploaded_at')
+    list_filter = ('topic__module__subject',)
+    search_fields = ('topic__title', 'caption')
 
 
 @admin.register(Problem)
