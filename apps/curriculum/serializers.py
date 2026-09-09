@@ -1,6 +1,26 @@
 from rest_framework import serializers
-from .models import Subject, Module, Topic, CodeExample, Problem
-from apps.assignments.models import ProblemAccess, Submission
+from django.contrib.auth import get_user_model
+from .models import (
+    Subject, Module, Topic, CodeExample, Problem,
+    Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord
+)
+
+User = get_user_model()
+
+
+class ProblemSerializer(serializers.ModelSerializer):
+    topic_title = serializers.CharField(source='topic.title', read_only=True)
+    module_id = serializers.IntegerField(source='topic.module.id', read_only=True)
+    subject_slug = serializers.CharField(source='topic.module.subject.slug', read_only=True)
+
+    class Meta:
+        model = Problem
+        fields = [
+            'id', 'topic', 'topic_title', 'module_id', 'subject_slug',
+            'title', 'description', 'language', 'expected_output',
+            'expected_output_hint', 'starter_code', 'test_criteria',
+            'expected_keywords', 'points', 'order'
+        ]
 
 
 class CodeExampleSerializer(serializers.ModelSerializer):
@@ -9,166 +29,124 @@ class CodeExampleSerializer(serializers.ModelSerializer):
         fields = ['id', 'topic', 'label', 'code', 'order']
 
 
-class ProblemAccessSerializer(serializers.ModelSerializer):
-    is_active_now = serializers.BooleanField(read_only=True)
-    is_expired = serializers.BooleanField(read_only=True)
-    seconds_remaining = serializers.IntegerField(read_only=True)
-
-    class Meta:
-        model = ProblemAccess
-        fields = [
-            'is_unlocked', 'unlocked_at', 'deadline',
-            'allow_late_submission', 'is_active_now',
-            'is_expired', 'seconds_remaining'
-        ]
-
-
-class ProblemSerializer(serializers.ModelSerializer):
-    access_control = ProblemAccessSerializer(read_only=True)
-    my_submission = serializers.SerializerMethodField()
-    topic_title = serializers.CharField(source='topic.title', read_only=True)
-    module_name = serializers.CharField(source='topic.module.name', read_only=True)
-    module_level = serializers.CharField(source='topic.module.level', read_only=True)
-
-    class Meta:
-        model = Problem
-        fields = [
-            'id', 'topic', 'topic_title', 'module_name', 'module_level',
-            'title', 'description', 'expected_output_hint',
-            'starter_code', 'test_criteria', 'expected_keywords',
-            'points', 'order', 'access_control', 'my_submission'
-        ]
-
-    def get_my_submission(self, obj):
-        request = self.context.get('request')
-        if not request or not request.user.is_authenticated:
-            return None
-        sub = Submission.objects.filter(student=request.user, problem=obj).first()
-        if not sub:
-            return None
-        return {
-            'id': sub.id,
-            'status': sub.status,
-            'score': sub.score,
-            'staff_feedback': sub.staff_feedback,
-            'submitted_at': sub.submitted_at,
-            'reviewed_at': sub.reviewed_at,
-            'submitted_code': sub.submitted_code,
-            'notes': sub.notes,
-        }
-
-
-class ProblemWriteSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Problem
-        fields = [
-            'id', 'topic', 'title', 'description',
-            'expected_output_hint', 'starter_code',
-            'test_criteria', 'expected_keywords',
-            'points', 'order'
-        ]
-
-
 class TopicSerializer(serializers.ModelSerializer):
-    examples = CodeExampleSerializer(many=True, read_only=True)
     problems = ProblemSerializer(many=True, read_only=True)
+    examples = CodeExampleSerializer(many=True, read_only=True)
     module_name = serializers.CharField(source='module.name', read_only=True)
-    module_level = serializers.CharField(source='module.level', read_only=True)
+    subject_id = serializers.IntegerField(source='module.subject.id', read_only=True)
+    subject_name = serializers.CharField(source='module.subject.name', read_only=True)
 
     class Meta:
         model = Topic
         fields = [
-            'id', 'topic_id', 'title', 'module', 'module_name',
-            'module_level', 'explain', 'order', 'examples', 'problems'
+            'id', 'module', 'module_name', 'subject_id', 'subject_name',
+            'topic_id', 'title', 'explain', 'notes_content', 'order',
+            'problems', 'examples'
         ]
-
-
-class TopicWriteSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Topic
-        fields = ['id', 'module', 'topic_id', 'title', 'explain', 'order']
 
 
 class ModuleSerializer(serializers.ModelSerializer):
     topics = TopicSerializer(many=True, read_only=True)
-    total_topics = serializers.SerializerMethodField()
-    total_problems = serializers.SerializerMethodField()
     subject_name = serializers.CharField(source='subject.name', read_only=True)
 
     class Meta:
         model = Module
-        fields = [
-            'id', 'subject', 'subject_name', 'name', 'level', 'order', 'topics',
-            'total_topics', 'total_problems'
-        ]
-
-    def get_total_topics(self, obj):
-        return obj.topics.count()
-
-    def get_total_problems(self, obj):
-        return Problem.objects.filter(topic__module=obj).count()
-
-
-class ModuleWriteSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Module
-        fields = ['id', 'subject', 'name', 'level', 'order']
+        fields = ['id', 'subject', 'subject_name', 'name', 'level', 'order', 'topics']
 
 
 class SubjectSerializer(serializers.ModelSerializer):
-    total_modules = serializers.SerializerMethodField()
-    total_topics = serializers.SerializerMethodField()
-    total_problems = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Subject
-        fields = [
-            'id', 'name', 'slug', 'description', 'short_description',
-            'icon', 'banner_image', 'instructor_name', 'level',
-            'duration', 'order', 'is_active', 'total_modules',
-            'total_topics', 'total_problems', 'created_at'
-        ]
-
-    def get_total_modules(self, obj):
-        return obj.modules.count()
-
-    def get_total_topics(self, obj):
-        return Topic.objects.filter(module__subject=obj).count()
-
-    def get_total_problems(self, obj):
-        return Problem.objects.filter(topic__module__subject=obj).count()
-
-
-class SubjectDetailSerializer(serializers.ModelSerializer):
     modules = ModuleSerializer(many=True, read_only=True)
-    total_modules = serializers.SerializerMethodField()
-    total_topics = serializers.SerializerMethodField()
-    total_problems = serializers.SerializerMethodField()
+    batch_count = serializers.SerializerMethodField()
+    topic_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Subject
         fields = [
             'id', 'name', 'slug', 'description', 'short_description',
-            'icon', 'banner_image', 'instructor_name', 'level',
-            'duration', 'order', 'is_active', 'modules',
-            'total_modules', 'total_topics', 'total_problems', 'created_at'
+            'duration', 'schedule_type', 'level', 'icon', 'banner_image',
+            'instructor_name', 'order', 'is_active', 'created_at',
+            'modules', 'batch_count', 'topic_count'
         ]
 
-    def get_total_modules(self, obj):
-        return obj.modules.count()
+    def get_batch_count(self, obj):
+        return obj.batches.count()
 
-    def get_total_topics(self, obj):
+    def get_topic_count(self, obj):
         return Topic.objects.filter(module__subject=obj).count()
 
-    def get_total_problems(self, obj):
-        return Problem.objects.filter(topic__module__subject=obj).count()
 
-
-class SubjectWriteSerializer(serializers.ModelSerializer):
+# Batch Serializers
+class BatchUserMiniSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Subject
+        model = User
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'mobile_number', 'role']
+
+
+class BatchTopicProgressSerializer(serializers.ModelSerializer):
+    topic_title = serializers.CharField(source='topic.title', read_only=True)
+    topic_order = serializers.IntegerField(source='topic.order', read_only=True)
+    marked_by_name = serializers.CharField(source='marked_by.display_name', read_only=True)
+
+    class Meta:
+        model = BatchTopicProgress
         fields = [
-            'id', 'name', 'slug', 'description', 'short_description',
-            'icon', 'banner_image', 'instructor_name', 'level',
-            'duration', 'order', 'is_active'
+            'id', 'batch', 'topic', 'topic_title', 'topic_order',
+            'is_completed', 'completed_at', 'marked_by', 'marked_by_name', 'remarks'
         ]
+
+
+class BatchSerializer(serializers.ModelSerializer):
+    course_name = serializers.CharField(source='course.name', read_only=True)
+    course_slug = serializers.CharField(source='course.slug', read_only=True)
+    staff_details = BatchUserMiniSerializer(source='staff', many=True, read_only=True)
+    student_details = BatchUserMiniSerializer(source='students', many=True, read_only=True)
+    student_count = serializers.IntegerField(read_only=True)
+    progress_stats = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Batch
+        fields = [
+            'id', 'name', 'course', 'course_name', 'course_slug',
+            'staff', 'staff_details', 'students', 'student_details',
+            'schedule', 'start_date', 'end_date', 'status', 'max_students',
+            'student_count', 'created_at', 'progress_stats'
+        ]
+
+    def get_progress_stats(self, obj):
+        total_topics = Topic.objects.filter(module__subject=obj.course).count()
+        completed_topics = obj.topic_progress.filter(is_completed=True).count()
+        percent = int((completed_topics / total_topics * 100)) if total_topics > 0 else 0
+        return {
+            'total_topics': total_topics,
+            'completed_topics': completed_topics,
+            'remaining_topics': max(0, total_topics - completed_topics),
+            'progress_percent': percent
+        }
+
+
+# Staff Daily Task / Performance Log Serializers
+class StudentAttendanceRecordSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(source='student.display_name', read_only=True)
+    student_username = serializers.CharField(source='student.username', read_only=True)
+
+    class Meta:
+        model = StudentAttendanceRecord
+        fields = ['id', 'daily_log', 'student', 'student_name', 'student_username', 'is_present', 'remarks']
+
+
+class StaffDailyLogSerializer(serializers.ModelSerializer):
+    batch_name = serializers.CharField(source='batch.name', read_only=True)
+    course_name = serializers.CharField(source='course.name', read_only=True)
+    staff_name = serializers.CharField(source='staff.display_name', read_only=True)
+    topic_title = serializers.CharField(source='topic.title', read_only=True)
+    student_attendance = StudentAttendanceRecordSerializer(source='student_attendance_records', many=True, read_only=True)
+
+    class Meta:
+        model = StaffDailyLog
+        fields = [
+            'id', 'date', 'batch', 'batch_name', 'course', 'course_name',
+            'staff', 'staff_name', 'session_type', 'session_title', 'topic',
+            'topic_title', 'total_enrolled', 'students_attended', 'remarks',
+            'created_at', 'updated_at', 'student_attendance'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'batch_name', 'course_name', 'staff_name', 'topic_title']

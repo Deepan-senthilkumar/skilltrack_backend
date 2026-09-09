@@ -1,17 +1,217 @@
 from django.utils import timezone
+from django.db.models import Count, Avg, Q
 from rest_framework import views, generics, status, permissions
 from rest_framework.response import Response
-from apps.curriculum.models import Problem, Module
+from rest_framework.pagination import PageNumberPagination
+from apps.curriculum.models import Problem, Module, Batch
 from .models import ProblemAccess, Submission
 from .permissions import IsInstructor
+from .code_runner import run_and_validate_code
 from .serializers import (
     ProblemAccessUpdateSerializer,
     BulkModuleUnlockSerializer,
     SubmissionSubmitSerializer,
+    TestRunSerializer,
     SubmissionDetailSerializer,
     ReviewSubmissionSerializer,
     ProblemAccessControlSerializer,
 )
+
+
+class StandardResultsSetPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+class ProblemTestRunView(views.APIView):
+    """
+    Executes student code in a sandboxed runner and returns live output, errors,
+    execution time, and auto-validation test result without saving a final submission.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            problem = Problem.objects.get(pk=pk)
+        except Problem.DoesNotExist:
+            return Response({'detail': 'Problem not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = TestRunSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        code = serializer.validated_data['code']
+        language = serializer.validated_data.get('language') or problem.language or 'python'
+        expected_output = serializer.validated_data.get('expected_output') or problem.expected_output
+
+        result = run_and_validate_code(
+            code=code,
+            language=language,
+            expected_output=expected_output,
+            timeout_sec=5.0
+        )
+
+        return Response({
+            'problem_id': problem.id,
+            'problem_title': problem.title,
+            'language': language,
+            'is_passed': result['is_passed'],
+            'status': result['status'],
+            'actual_output': result['actual_output'],
+            'expected_output': result['expected_output'],
+            'error_detail': result['error_detail'],
+            'execution_time_ms': result['execution_time_ms'],
+        })
+
+
+class ProblemSubmitSolutionView(views.APIView):
+    """
+    Student submits solution. Compiles/runs code in sandboxed runner,
+    compares actual vs expected output, records execution time, full errors,
+    attempt number, and persists the submission record.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            problem = Problem.objects.get(pk=pk)
+        except Problem.DoesNotExist:
+            return Response({'detail': 'Problem not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = SubmissionSubmitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        code = serializer.validated_data['code']
+        language = serializer.validated_data.get('language') or problem.language or 'python'
+        batch_id = serializer.validated_data.get('batch_id')
+        notes = serializer.validated_data.get('notes', '')
+
+        # Resolve batch if not provided
+        batch = None
+        if batch_id:
+            batch = Batch.objects.filter(pk=batch_id).first()
+        if not batch:
+            batch = request.user.enrolled_batches.first()
+
+        # Execute code in sandboxed runner
+        exec_res = run_and_validate_code(
+            code=code,
+            language=language,
+            expected_output=problem.expected_output,
+            timeout_sec=5.0
+        )
+
+        # Count prior attempts for this student & problem
+        prior_attempts = Submission.objects.filter(
+            student=request.user,
+            problem=problem
+        ).count()
+        attempt_number = prior_attempts + 1
+
+        # Calculate score: 100% if passed, partial if runtime/syntax error
+        score = problem.points if exec_res['is_passed'] else (2 if exec_res['status'] != 'COMPILE_ERROR' and len(code) > 20 else 0)
+
+        submission = Submission.objects.create(
+            student=request.user,
+            problem=problem,
+            batch=batch,
+            language=language,
+            submitted_code=code,
+            actual_output=exec_res['actual_output'],
+            expected_output=problem.expected_output,
+            is_passed=exec_res['is_passed'],
+            status=exec_res['status'],
+            execution_time_ms=exec_res['execution_time_ms'],
+            error_detail=exec_res['error_detail'],
+            attempt_number=attempt_number,
+            notes=notes,
+            score=score
+        )
+
+        return Response(
+            SubmissionDetailSerializer(submission).data,
+            status=status.HTTP_201_CREATED
+        )
+
+
+class StudentMySubmissionsListView(generics.ListAPIView):
+    """List submissions made by the authenticated student."""
+    serializer_class = SubmissionDetailSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Submission.objects.filter(student=self.request.user).select_related(
+            'problem__topic__module__subject', 'batch', 'reviewed_by'
+        ).order_by('-submitted_at')
+
+
+class StaffSubmissionListView(generics.ListAPIView):
+    """
+    Staff and Admin dashboard for reviewing all code submissions with full execution details.
+    """
+    serializer_class = SubmissionDetailSerializer
+    permission_classes = [IsInstructor]
+    pagination_class = StandardResultsSetPagination
+
+    def get_queryset(self):
+        queryset = Submission.objects.all().select_related(
+            'student', 'problem__topic__module__subject', 'batch', 'reviewed_by'
+        ).order_by('-submitted_at')
+
+        # Filter by Batch
+        batch_id = self.request.query_params.get('batch')
+        if batch_id:
+            queryset = queryset.filter(batch_id=batch_id)
+
+        # Filter by Course
+        course_id = self.request.query_params.get('course')
+        if course_id:
+            queryset = queryset.filter(problem__topic__module__subject_id=course_id)
+
+        # Filter by Student
+        student_id = self.request.query_params.get('student')
+        if student_id:
+            queryset = queryset.filter(student_id=student_id)
+
+        # Filter by Problem
+        problem_id = self.request.query_params.get('problem')
+        if problem_id:
+            queryset = queryset.filter(problem_id=problem_id)
+
+        # Filter by Status (PASSED, FAILED, COMPILE_ERROR, RUNTIME_ERROR)
+        status_param = self.request.query_params.get('status')
+        if status_param:
+            queryset = queryset.filter(status=status_param.upper())
+
+        return queryset
+
+
+class StaffSubmissionDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Submission.objects.all().select_related('student', 'problem__topic', 'batch', 'reviewed_by')
+    serializer_class = SubmissionDetailSerializer
+    permission_classes = [IsInstructor]
+
+
+class StaffReviewSubmissionView(views.APIView):
+    permission_classes = [IsInstructor]
+
+    def post(self, request, pk):
+        try:
+            sub = Submission.objects.get(pk=pk)
+        except Submission.DoesNotExist:
+            return Response({'detail': 'Submission not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ReviewSubmissionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        sub.status = serializer.validated_data['status']
+        sub.score = serializer.validated_data.get('score', sub.score)
+        sub.staff_feedback = serializer.validated_data.get('staff_feedback', '')
+        sub.reviewed_at = timezone.now()
+        sub.reviewed_by = request.user
+        sub.save()
+
+        return Response(SubmissionDetailSerializer(sub).data)
 
 
 class StaffUpdateProblemAccessView(views.APIView):
@@ -77,255 +277,18 @@ class StaffBulkModuleUnlockView(views.APIView):
         })
 
 
-def run_automated_evaluation(code, notes, problem):
-    """
-    Automated evaluation engine that tests code structure, syntax patterns,
-    and output assertions, computing the score automatically.
-    """
-    total_pts = problem.points or 10
-    score = 0
-    feedback_lines = []
-    tests_summary = []
-
-    code_text = code.strip()
-    notes_text = notes.strip().lower()
-
-    # 1. Structure & non-empty check
-    if len(code_text) >= 15:
-        base_score = max(1, int(total_pts * 0.4))
-        score += base_score
-        tests_summary.append({"name": "Code Structure & Syntax Validity", "status": "PASSED", "points": base_score})
-        feedback_lines.append(f"✓ Structure & syntax verified (+{base_score} pts)")
-    else:
-        tests_summary.append({"name": "Code Structure & Syntax Validity", "status": "FAILED", "points": 0})
-        feedback_lines.append("✗ Implementation too brief or empty")
-
-    # 2. Keywords / Architectural Tokens
-    kw_score = max(1, int(total_pts * 0.3))
-    keywords = problem.expected_keywords or []
-    if not keywords:
-        lower_title = (problem.title + " " + problem.description).lower()
-        if 'view' in lower_title or 'http' in lower_title:
-            keywords = ['def', 'return', 'request']
-        elif 'model' in lower_title or 'post' in lower_title:
-            keywords = ['class', 'models.']
-        elif 'url' in lower_title or 'path' in lower_title:
-            keywords = ['path', 'urlpatterns']
-        elif 'serializer' in lower_title:
-            keywords = ['serializer', 'class']
-        elif 'consumer' in lower_title or 'websocket' in lower_title:
-            keywords = ['consumer', 'async']
-        else:
-            keywords = ['def', 'import']
-
-    matched_kw_count = sum(1 for kw in keywords if kw.lower() in code_text.lower() or kw.lower() in notes_text)
-    if keywords and matched_kw_count > 0:
-        earned_kw = max(1, int((matched_kw_count / len(keywords)) * kw_score))
-        score += earned_kw
-        tests_summary.append({"name": f"Django Architecture Tokens ({matched_kw_count}/{len(keywords)})", "status": "PASSED", "points": earned_kw})
-        feedback_lines.append(f"✓ Key architectural patterns matched: {', '.join(keywords[:3])} (+{earned_kw} pts)")
-    else:
-        tests_summary.append({"name": "Django Architecture Tokens", "status": "FAILED", "points": 0})
-        feedback_lines.append("✗ Core Django patterns missing")
-
-    # 3. Output assertion & behavioral check
-    remaining_score = total_pts - score
-    output_ok = False
-    if problem.expected_output_hint:
-        hint_tokens = [w for w in problem.expected_output_hint.lower().replace('.', ' ').split() if len(w) > 3]
-        if any(tok in notes_text or tok in code_text.lower() for tok in hint_tokens) or len(notes_text) > 8:
-            output_ok = True
-    elif len(notes_text) > 5 or 'ok' in notes_text or '200' in notes_text or 'migrat' in notes_text or 'success' in notes_text:
-        output_ok = True
-    elif score >= int(total_pts * 0.6):
-        output_ok = True
-
-    if output_ok:
-        score += remaining_score
-        tests_summary.append({"name": "Output / Behavioral Assertions", "status": "PASSED", "points": remaining_score})
-        feedback_lines.append(f"✓ Output / behavior verified (+{remaining_score} pts)")
-    else:
-        tests_summary.append({"name": "Output / Behavioral Assertions", "status": "FAILED", "points": 0})
-        feedback_lines.append("ℹ Provide matching terminal output to gain full marks")
-
-    score = min(total_pts, score)
-    status_result = "PASSED" if score >= int(total_pts * 0.6) else "REVISION_REQUESTED"
-    feedback = f"[Auto-Graded by AI Test Runner]\n" + "\n".join(feedback_lines) + f"\n\nCalculated Score: {score}/{total_pts} ({status_result})"
-
-    return score, status_result, feedback, tests_summary
-
-
-class TestRunCodeView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request, pk):
-        try:
-            problem = Problem.objects.select_related('access_control').get(pk=pk)
-        except Problem.DoesNotExist:
-            return Response({'detail': 'Problem not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        code = request.data.get('submitted_code', '')
-        notes = request.data.get('notes', '')
-
-        score, eval_status, feedback, tests = run_automated_evaluation(code, notes, problem)
-
-        return Response({
-            'score': score,
-            'max_points': problem.points,
-            'status': eval_status,
-            'feedback': feedback,
-            'tests': tests,
-        })
-
-
-class SubmitProblemSolutionView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request, pk):
-        try:
-            problem = Problem.objects.select_related('access_control').get(pk=pk)
-        except Problem.DoesNotExist:
-            return Response({'detail': 'Problem not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Check Access Control & Timeline Restrictions
-        access = getattr(problem, 'access_control', None)
-        if not access or not access.is_unlocked:
-            return Response(
-                {'detail': 'This problem has not been unlocked by your instructor yet.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        now = timezone.now()
-        is_late = False
-        if access.deadline and now > access.deadline:
-            if not access.allow_late_submission:
-                return Response(
-                    {'detail': 'The deadline for this problem has passed. Submissions are closed.'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            is_late = True
-
-        serializer = SubmissionSubmitSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        code = serializer.validated_data['submitted_code']
-        notes = serializer.validated_data.get('notes', '')
-
-        # Automated Grading Execution
-        score, eval_status, auto_feedback, _ = run_automated_evaluation(code, notes, problem)
-
-        submission, _ = Submission.objects.get_or_create(
-            student=request.user,
-            problem=problem
-        )
-        submission.submitted_code = code
-        submission.notes = notes
-        submission.score = score
-        submission.status = eval_status
-        submission.staff_feedback = auto_feedback
-        submission.is_late = is_late
-        submission.submitted_at = now
-        submission.reviewed_at = now
-        submission.save()
-
-        return Response(SubmissionDetailSerializer(submission).data, status=status.HTTP_200_OK)
-
-
-class StaffSubmissionsListView(generics.ListAPIView):
-    permission_classes = [IsInstructor]
-    serializer_class = SubmissionDetailSerializer
-
-    def get_queryset(self):
-        qs = Submission.objects.select_related(
-            'student', 'problem__topic__module', 'reviewed_by'
-        ).all()
-
-        status_filter = self.request.query_params.get('status')
-        problem_id = self.request.query_params.get('problem_id')
-        student_id = self.request.query_params.get('student_id')
-
-        if status_filter:
-            qs = qs.filter(status=status_filter)
-        if problem_id:
-            qs = qs.filter(problem_id=problem_id)
-        if student_id:
-            qs = qs.filter(student_id=student_id)
-
-        return qs.order_by('-submitted_at')
-
-
-class StaffReviewSubmissionView(views.APIView):
-    permission_classes = [IsInstructor]
-
-    def post(self, request, pk):
-        try:
-            submission = Submission.objects.select_related('student', 'problem').get(pk=pk)
-        except Submission.DoesNotExist:
-            return Response({'detail': 'Submission not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        serializer = ReviewSubmissionSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        submission.status = serializer.validated_data['status']
-        submission.score = serializer.validated_data.get('score', submission.problem.points if submission.status == 'PASSED' else 0)
-        submission.staff_feedback = serializer.validated_data.get('staff_feedback', '')
-        submission.reviewed_at = timezone.now()
-        submission.reviewed_by = request.user
-        submission.save()
-
-        return Response(SubmissionDetailSerializer(submission).data)
-
-
-class StudentMySubmissionsView(generics.ListAPIView):
-    permission_classes = [permissions.IsAuthenticated]
-    serializer_class = SubmissionDetailSerializer
-
-    def get_queryset(self):
-        return Submission.objects.select_related(
-            'problem__topic__module', 'reviewed_by'
-        ).filter(student=self.request.user).order_by('-submitted_at')
-
-
 class StaffAnalyticsView(views.APIView):
     permission_classes = [IsInstructor]
 
     def get(self, request):
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
-
-        total_students = User.objects.filter(role='STUDENT').count()
-        total_problems = Problem.objects.count()
-        unlocked_problems = ProblemAccess.objects.filter(is_unlocked=True).count()
-        
-        all_submissions = Submission.objects.all()
-        total_submissions = all_submissions.count()
-        pending_review = all_submissions.filter(status='SUBMITTED').count()
-        passed_count = all_submissions.filter(status='PASSED').count()
-        revision_count = all_submissions.filter(status='REVISION_REQUESTED').count()
-
-        # Module-wise breakdown
-        modules_stats = []
-        for m in Module.objects.all():
-            m_probs = Problem.objects.filter(topic__module=m)
-            m_prob_count = m_probs.count()
-            m_unlocked = ProblemAccess.objects.filter(problem__in=m_probs, is_unlocked=True).count()
-            m_subs = Submission.objects.filter(problem__in=m_probs).count()
-            modules_stats.append({
-                'module_id': m.id,
-                'name': m.name,
-                'level': m.level,
-                'total_problems': m_prob_count,
-                'unlocked_problems': m_unlocked,
-                'total_submissions': m_subs
-            })
+        total_students = request.user.enrolled_batches.aggregate(c=Count('students', distinct=True))['c'] or 0
+        total_subs = Submission.objects.count()
+        passed_subs = Submission.objects.filter(is_passed=True).count()
+        pass_rate = round((passed_subs / total_subs * 100), 1) if total_subs > 0 else 0
 
         return Response({
             'total_students': total_students,
-            'total_problems': total_problems,
-            'unlocked_problems': unlocked_problems,
-            'total_submissions': total_submissions,
-            'pending_review': pending_review,
-            'passed_count': passed_count,
-            'revision_count': revision_count,
-            'modules': modules_stats,
+            'total_submissions': total_subs,
+            'passed_submissions': passed_subs,
+            'pass_rate_percent': pass_rate,
         })
