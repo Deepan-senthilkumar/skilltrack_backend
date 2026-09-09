@@ -65,14 +65,14 @@ class TopicInline(admin.TabularInline):
 
 @admin.register(Module)
 class ModuleAdmin(admin.ModelAdmin):
-    list_display = ('name', 'subject', 'level', 'order')
+    list_display: list[str] = ['name', 'subject', 'level', 'order']
     list_filter = ('level', 'subject')
     inlines = [TopicInline]
 
 
 @admin.register(Topic)
 class TopicAdmin(admin.ModelAdmin):
-    list_display = ('title', 'topic_id', 'module', 'order')
+    list_display: list[str] = ['title', 'topic_id', 'module', 'order']
     list_filter = ('module__level', 'module', 'module__subject')
     search_fields = ('title', 'topic_id')
     inlines = [TopicImageInline, CodeExampleInline, ProblemInline]
@@ -80,13 +80,13 @@ class TopicAdmin(admin.ModelAdmin):
 
 @admin.register(TopicImage)
 class TopicImageAdmin(admin.ModelAdmin):
-    list_display = ('topic', 'caption', 'order', 'uploaded_at')
+    list_display: list[str] = ['topic', 'caption', 'order', 'uploaded_at']
     list_filter = ('topic__module__subject',)
     search_fields = ('topic__title', 'caption')
 
 
 @admin.register(Problem)
 class ProblemAdmin(admin.ModelAdmin):
-    list_display = ('title', 'topic', 'language', 'points', 'order')
+    list_display: list[str] = ['title', 'topic', 'language', 'points', 'order']
     list_filter = ('language', 'topic__module__subject')
     search_fields = ('title', 'description', 'expected_output')
