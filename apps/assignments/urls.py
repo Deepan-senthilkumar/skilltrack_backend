@@ -8,6 +8,7 @@ from .views import (
     StaffReviewSubmissionView,
     StaffUpdateProblemAccessView,
     StaffBulkModuleUnlockView,
+    StaffBulkProblemsAccessView,
     StaffAnalyticsView,
 )
 
@@ -22,6 +23,8 @@ urlpatterns = [
     path('staff/submissions/<int:pk>/', StaffSubmissionDetailView.as_view(), name='staff-submission-detail'),
     path('staff/submissions/<int:pk>/review/', StaffReviewSubmissionView.as_view(), name='staff-review-submission'),
     path('staff/problems/<int:pk>/access/', StaffUpdateProblemAccessView.as_view(), name='staff-problem-access'),
+    path('staff/problems/bulk-access/', StaffBulkProblemsAccessView.as_view(), name='staff-bulk-problems-access'),
     path('staff/modules/unlock/', StaffBulkModuleUnlockView.as_view(), name='staff-bulk-module-unlock'),
     path('staff/analytics/', StaffAnalyticsView.as_view(), name='staff-analytics'),
 ]
+

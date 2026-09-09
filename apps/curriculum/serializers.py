@@ -13,6 +13,8 @@ class ProblemSerializer(serializers.ModelSerializer):
     topic_title = serializers.CharField(source='topic.title', read_only=True)
     module_id = serializers.IntegerField(source='topic.module.id', read_only=True)
     subject_slug = serializers.CharField(source='topic.module.subject.slug', read_only=True)
+    access_control = serializers.SerializerMethodField()
+    my_submission = serializers.SerializerMethodField()
 
     class Meta:
         model = Problem
@@ -20,8 +22,57 @@ class ProblemSerializer(serializers.ModelSerializer):
             'id', 'topic', 'topic_title', 'module_id', 'subject_slug',
             'title', 'description', 'language', 'expected_output',
             'expected_output_hint', 'starter_code', 'test_criteria',
-            'expected_keywords', 'points', 'order'
+            'expected_keywords', 'points', 'order',
+            'access_control', 'my_submission'
         ]
+
+    def get_access_control(self, obj):
+        try:
+            access = getattr(obj, 'access_control', None)
+            if not access:
+                return {
+                    'is_unlocked': True,
+                    'is_active_now': True,
+                    'allow_late_submission': True,
+                    'deadline': None,
+                    'is_expired': False,
+                }
+            from django.utils import timezone
+            now = timezone.now()
+            is_expired = bool(access.deadline and now > access.deadline)
+            return {
+                'id': access.id,
+                'is_unlocked': bool(access.is_unlocked),
+                'deadline': access.deadline,
+                'allow_late_submission': bool(access.allow_late_submission),
+                'is_active_now': bool(access.is_active_now),
+                'is_expired': is_expired,
+            }
+        except Exception:
+            return {
+                'is_unlocked': True,
+                'is_active_now': True,
+                'allow_late_submission': True,
+                'deadline': None,
+                'is_expired': False,
+            }
+
+    def get_my_submission(self, obj):
+        request = self.context.get('request')
+        if not request or not getattr(request, 'user', None) or not request.user.is_authenticated:
+            return None
+        sub = obj.submissions.filter(student=request.user).order_by('-submitted_at').first()
+        if not sub:
+            return None
+        return {
+            'id': sub.id,
+            'status': sub.status,
+            'is_passed': sub.is_passed,
+            'score': sub.score,
+            'submitted_code': sub.submitted_code,
+            'submitted_at': sub.submitted_at,
+        }
+
 
 
 class CodeExampleSerializer(serializers.ModelSerializer):

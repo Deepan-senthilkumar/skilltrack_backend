@@ -279,6 +279,39 @@ class StaffBulkModuleUnlockView(views.APIView):
         })
 
 
+class StaffBulkProblemsAccessView(views.APIView):
+    permission_classes = [IsInstructor]
+
+    def post(self, request):
+        is_unlocked = request.data.get('is_unlocked', True)
+        if isinstance(is_unlocked, str):
+            is_unlocked = is_unlocked.lower() in ('true', '1', 'yes')
+        allow_late = request.data.get('allow_late_submission', True)
+        problem_ids = request.data.get('problem_ids', None)
+
+        if problem_ids and isinstance(problem_ids, list):
+            problems = Problem.objects.filter(id__in=problem_ids)
+        else:
+            problems = Problem.objects.all()
+
+        updated_count = 0
+        for p in problems:
+            access, _ = ProblemAccess.objects.get_or_create(problem=p)
+            access.is_unlocked = bool(is_unlocked)
+            access.allow_late_submission = bool(allow_late)
+            if access.is_unlocked and not access.unlocked_at:
+                access.unlocked_at = timezone.now()
+            access.save()
+            updated_count += 1
+
+        action_word = "unlocked" if is_unlocked else "locked"
+        return Response({
+            'detail': f'Successfully {action_word} {updated_count} practice lab(s) for students.',
+            'count': updated_count,
+            'is_unlocked': bool(is_unlocked),
+        })
+
+
 class StaffAnalyticsView(views.APIView):
     permission_classes = [IsInstructor]
 

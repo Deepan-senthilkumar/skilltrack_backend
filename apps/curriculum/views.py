@@ -196,11 +196,38 @@ class StaffProblemListCreateView(generics.ListCreateAPIView):
     serializer_class = ProblemSerializer
     permission_classes = [IsInstructor]
 
+    def perform_create(self, serializer):
+        problem = serializer.save()
+        from apps.assignments.models import ProblemAccess
+        is_unlocked = self.request.data.get('is_unlocked', True)
+        if isinstance(is_unlocked, str):
+            is_unlocked = is_unlocked.lower() in ('true', '1', 'yes')
+        access, _ = ProblemAccess.objects.get_or_create(problem=problem)
+        access.is_unlocked = bool(is_unlocked)
+        access.allow_late_submission = True
+        if access.is_unlocked and not access.unlocked_at:
+            access.unlocked_at = timezone.now()
+        access.save()
+
 
 class StaffProblemDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Problem.objects.all().select_related('topic__module__subject')
     serializer_class = ProblemSerializer
     permission_classes = [IsInstructor]
+
+    def perform_update(self, serializer):
+        problem = serializer.save()
+        if 'is_unlocked' in self.request.data:
+            from apps.assignments.models import ProblemAccess
+            is_unlocked = self.request.data.get('is_unlocked')
+            if isinstance(is_unlocked, str):
+                is_unlocked = is_unlocked.lower() in ('true', '1', 'yes')
+            access, _ = ProblemAccess.objects.get_or_create(problem=problem)
+            access.is_unlocked = bool(is_unlocked)
+            if access.is_unlocked and not access.unlocked_at:
+                access.unlocked_at = timezone.now()
+            access.save()
+
 
 
 # Batch Views
