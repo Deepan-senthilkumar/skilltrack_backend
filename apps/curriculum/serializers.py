@@ -61,6 +61,9 @@ class ProblemSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not getattr(request, 'user', None) or not request.user.is_authenticated:
             return None
+        # Skip student submission query for staff/instructors to avoid N+1 DB round trips
+        if getattr(request.user, 'is_staff', False) or getattr(request.user, 'role', '') == 'STAFF':
+            return None
         sub = obj.submissions.filter(student=request.user).order_by('-submitted_at').first()
         if not sub:
             return None
@@ -182,11 +185,15 @@ class SubjectSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
     def get_batch_count(self, obj):
+        if hasattr(obj, 'annotated_batch_count'):
+            return obj.annotated_batch_count
         if hasattr(obj, '_prefetched_objects_cache') and 'batches' in obj._prefetched_objects_cache:
             return len(obj.batches.all())
         return obj.batches.count()
 
     def get_topic_count(self, obj):
+        if hasattr(obj, 'annotated_topic_count'):
+            return obj.annotated_topic_count
         if hasattr(obj, '_prefetched_objects_cache') and 'modules' in obj._prefetched_objects_cache:
             total = 0
             for m in obj.modules.all():
@@ -198,6 +205,8 @@ class SubjectSerializer(serializers.ModelSerializer):
         return Topic.objects.filter(module__subject=obj).count()
 
     def get_module_count(self, obj):
+        if hasattr(obj, 'annotated_module_count'):
+            return obj.annotated_module_count
         if hasattr(obj, '_prefetched_objects_cache') and 'modules' in obj._prefetched_objects_cache:
             return len(obj.modules.all())
         return obj.modules.count()
