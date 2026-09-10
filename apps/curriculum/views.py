@@ -26,59 +26,111 @@ class StandardResultsSetPagination(PageNumberPagination):
 
 # Subject / Course Views
 class SubjectListView(generics.ListAPIView):
-    queryset = Subject.objects.filter(is_active=True).prefetch_related('modules__topics__problems', 'modules__topics__images')
     serializer_class = SubjectSerializer
     permission_classes = [permissions.AllowAny]
 
+    def get_queryset(self):
+        return Subject.objects.filter(is_active=True).annotate(
+            annotated_batch_count=Count('batches', distinct=True),
+            annotated_topic_count=Count('modules__topics', distinct=True),
+            annotated_module_count=Count('modules', distinct=True)
+        ).prefetch_related(
+            'modules__topics__problems__access_control',
+            'modules__topics__examples',
+            'modules__topics__images',
+            'batches'
+        ).order_by('order', 'id')
+
 
 class SubjectDetailView(generics.RetrieveAPIView):
-    queryset = Subject.objects.all().prefetch_related('modules__topics__problems', 'modules__topics__images')
     serializer_class = SubjectSerializer
     lookup_field = 'slug'
     permission_classes = [permissions.AllowAny]
 
+    def get_queryset(self):
+        return Subject.objects.annotate(
+            annotated_batch_count=Count('batches', distinct=True),
+            annotated_topic_count=Count('modules__topics', distinct=True),
+            annotated_module_count=Count('modules', distinct=True)
+        ).prefetch_related(
+            'modules__topics__problems__access_control',
+            'modules__topics__examples',
+            'modules__topics__images',
+            'batches'
+        )
+
 
 class StaffSubjectListCreateView(generics.ListCreateAPIView):
-    queryset = Subject.objects.all().prefetch_related('modules__topics', 'batches').order_by('order', 'id')
     serializer_class = SubjectSerializer
     permission_classes = [IsInstructor]
+
+    def get_queryset(self):
+        return Subject.objects.annotate(
+            annotated_batch_count=Count('batches', distinct=True),
+            annotated_topic_count=Count('modules__topics', distinct=True),
+            annotated_module_count=Count('modules', distinct=True)
+        ).prefetch_related(
+            'modules__topics__problems__access_control',
+            'modules__topics__examples',
+            'modules__topics__images',
+            'batches'
+        ).order_by('order', 'id')
 
 
 class StaffSubjectDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Subject.objects.all().prefetch_related('modules__topics', 'batches')
     serializer_class = SubjectSerializer
     permission_classes = [IsInstructor]
+
+    def get_queryset(self):
+        return Subject.objects.annotate(
+            annotated_batch_count=Count('batches', distinct=True),
+            annotated_topic_count=Count('modules__topics', distinct=True),
+            annotated_module_count=Count('modules', distinct=True)
+        ).prefetch_related(
+            'modules__topics__problems__access_control',
+            'modules__topics__examples',
+            'modules__topics__images',
+            'batches'
+        )
 
 
 # Module Views
 class StaffModuleListCreateView(generics.ListCreateAPIView):
-    queryset = Module.objects.all().select_related('subject').prefetch_related('topics').order_by('order', 'id')
+    queryset = Module.objects.all().select_related('subject').prefetch_related(
+        'topics__problems__access_control',
+        'topics__examples',
+        'topics__images'
+    ).order_by('order', 'id')
     serializer_class = ModuleSerializer
     permission_classes = [IsInstructor]
 
 
 class StaffModuleDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Module.objects.all().select_related('subject').prefetch_related('topics')
+    queryset = Module.objects.all().select_related('subject').prefetch_related(
+        'topics__problems__access_control',
+        'topics__examples',
+        'topics__images'
+    )
     serializer_class = ModuleSerializer
     permission_classes = [IsInstructor]
 
 
 # Topic Views
 class TopicDetailView(generics.RetrieveAPIView):
-    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems', 'examples', 'images')
+    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems__access_control', 'examples', 'images')
     serializer_class = TopicSerializer
     lookup_field = 'topic_id'
     permission_classes = [permissions.AllowAny]
 
 
 class StaffTopicListCreateView(generics.ListCreateAPIView):
-    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems', 'examples', 'images').order_by('order', 'id')
+    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems__access_control', 'examples', 'images').order_by('order', 'id')
     serializer_class = TopicSerializer
     permission_classes = [IsInstructor]
 
 
 class StaffTopicDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems', 'examples', 'images')
+    queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems__access_control', 'examples', 'images')
     serializer_class = TopicSerializer
     permission_classes = [IsInstructor]
 
@@ -210,6 +262,7 @@ class StaffCodeExampleListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsInstructor]
 
     def get_queryset(self):
+        # pyrefly: ignore [missing-attribute]
         topic_id = self.request.query_params.get('topic')
         if topic_id:
             return CodeExample.objects.filter(topic_id=topic_id).order_by('order', 'id')
@@ -237,6 +290,7 @@ class StaffProblemListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         problem = serializer.save()
         from apps.assignments.models import ProblemAccess
+        # pyrefly: ignore [missing-attribute]
         is_unlocked = self.request.data.get('is_unlocked', True)
         if isinstance(is_unlocked, str):
             is_unlocked = is_unlocked.lower() in ('true', '1', 'yes')
@@ -255,8 +309,10 @@ class StaffProblemDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_update(self, serializer):
         problem = serializer.save()
+        # pyrefly: ignore [missing-attribute]
         if 'is_unlocked' in self.request.data:
             from apps.assignments.models import ProblemAccess
+            # pyrefly: ignore [missing-attribute]
             is_unlocked = self.request.data.get('is_unlocked')
             if isinstance(is_unlocked, str):
                 is_unlocked = is_unlocked.lower() in ('true', '1', 'yes')
