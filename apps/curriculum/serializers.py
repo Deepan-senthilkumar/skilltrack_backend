@@ -1,12 +1,73 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from .models import (
     Subject, Module, Topic, CodeExample, Problem, TopicImage,
     Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord,
-    PlatformCapability
+    PlatformCapability, TopicQuizQuestion, StudentTopicProgress, TopicQuizAttempt
 )
 
 User = get_user_model()
+
+
+class TopicQuizQuestionSerializer(serializers.ModelSerializer):
+    """Full question serializer for Staff / Admin with answer key"""
+    topic_title = serializers.CharField(source='topic.title', read_only=True)
+    module_name = serializers.CharField(source='topic.module.name', read_only=True)
+    subject_name = serializers.CharField(source='topic.module.subject.name', read_only=True)
+
+    class Meta:
+        model = TopicQuizQuestion
+        fields = [
+            'id', 'topic', 'topic_title', 'module_name', 'subject_name',
+            'question_text', 'option_a', 'option_b', 'option_c', 'option_d',
+            'correct_option', 'explanation', 'order', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+class StudentQuizQuestionSerializer(serializers.ModelSerializer):
+    """Safe question serializer for students during test execution (omits correct_option and explanation)"""
+    class Meta:
+        model = TopicQuizQuestion
+        fields = ['id', 'question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'order']
+
+
+class StudentTopicProgressSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(source='student.display_name', read_only=True)
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    topic_title = serializers.CharField(source='topic.title', read_only=True)
+    is_in_cooldown = serializers.BooleanField(read_only=True)
+    cooldown_seconds_remaining = serializers.IntegerField(source='cooldown_seconds_remaining', read_only=True)
+
+    class Meta:
+        model = StudentTopicProgress
+        fields = [
+            'id', 'student', 'student_name', 'student_username',
+            'topic', 'topic_title', 'is_completed', 'completed_at',
+            'attempts_count', 'last_score', 'last_total', 'last_percentage',
+            'last_passed', 'can_reattempt_after', 'is_in_cooldown',
+            'cooldown_seconds_remaining', 'updated_at'
+        ]
+        read_only_fields = ['id', 'updated_at']
+
+
+class TopicQuizAttemptSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(source='student.display_name', read_only=True)
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    topic_title = serializers.CharField(source='topic.title', read_only=True)
+    topic_id_slug = serializers.CharField(source='topic.topic_id', read_only=True)
+
+    class Meta:
+        model = TopicQuizAttempt
+        fields = [
+            'id', 'student', 'student_name', 'student_username',
+            'topic', 'topic_title', 'topic_id_slug', 'score', 'total_questions',
+            'percentage', 'is_passed', 'status', 'security_violations',
+            'violation_details', 'questions_data', 'selected_answers',
+            'time_taken_seconds', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
 
 
 class ProblemSerializer(serializers.ModelSerializer):
@@ -37,7 +98,6 @@ class ProblemSerializer(serializers.ModelSerializer):
                     'deadline': None,
                     'is_expired': False,
                 }
-            from django.utils import timezone
             now = timezone.now()
             is_expired = bool(access.deadline and now > access.deadline)
             return {
@@ -61,7 +121,6 @@ class ProblemSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not getattr(request, 'user', None) or not request.user.is_authenticated:
             return None
-        # Skip student submission query for staff/instructors to avoid N+1 DB round trips
         if getattr(request.user, 'is_staff', False) or getattr(request.user, 'role', '') == 'STAFF':
             return None
         sub = obj.submissions.filter(student=request.user).order_by('-submitted_at').first()
@@ -75,7 +134,6 @@ class ProblemSerializer(serializers.ModelSerializer):
             'submitted_code': sub.submitted_code,
             'submitted_at': sub.submitted_at,
         }
-
 
 
 class CodeExampleSerializer(serializers.ModelSerializer):
@@ -99,14 +157,46 @@ class TopicSerializer(serializers.ModelSerializer):
     module_name = serializers.CharField(source='module.name', read_only=True)
     subject_id = serializers.IntegerField(source='module.subject.id', read_only=True)
     subject_name = serializers.CharField(source='module.subject.name', read_only=True)
+    quiz_question_count = serializers.SerializerMethodField()
+    user_progress = serializers.SerializerMethodField()
 
     class Meta:
         model = Topic
         fields = [
             'id', 'module', 'module_name', 'subject_id', 'subject_name',
             'topic_id', 'title', 'explain', 'notes_content', 'order',
-            'problems', 'examples', 'images'
+            'problems', 'examples', 'images', 'quiz_question_count', 'user_progress'
         ]
+
+    def get_quiz_question_count(self, obj):
+        return obj.quiz_questions.count()
+
+    def get_user_progress(self, obj):
+        request = self.context.get('request')
+        if not request or not getattr(request, 'user', None) or not request.user.is_authenticated:
+            return None
+        try:
+            progress = obj.student_progress_records.filter(student=request.user).first()
+            if not progress:
+                return {
+                    'is_completed': False,
+                    'attempts_count': 0,
+                    'last_score': 0,
+                    'last_percentage': 0,
+                    'is_in_cooldown': False,
+                    'cooldown_seconds_remaining': 0,
+                }
+            return {
+                'is_completed': bool(progress.is_completed),
+                'completed_at': progress.completed_at,
+                'attempts_count': progress.attempts_count,
+                'last_score': progress.last_score,
+                'last_percentage': progress.last_percentage,
+                'is_in_cooldown': bool(progress.is_in_cooldown),
+                'cooldown_seconds_remaining': progress.cooldown_seconds_remaining(),
+            }
+        except Exception:
+            return None
 
     def create(self, validated_data):
         from django.utils.text import slugify

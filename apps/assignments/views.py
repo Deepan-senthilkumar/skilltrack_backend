@@ -57,6 +57,8 @@ class ProblemTestRunView(views.APIView):
             'language': language,
             'is_passed': result['is_passed'],
             'status': result['status'],
+            'match_percentage': result.get('match_percentage', 0.0),
+            'pass_threshold_percentage': 70.0,
             'actual_output': result['actual_output'],
             'expected_output': result['expected_output'],
             'error_detail': result['error_detail'],
@@ -93,13 +95,29 @@ class ProblemSubmitSolutionView(views.APIView):
         if not batch:
             batch = request.user.enrolled_batches.first()
 
-        # Execute code in sandboxed runner
-        exec_res = run_and_validate_code(
-            code=code,
-            language=language,
-            expected_output=problem.expected_output,
-            timeout_sec=5.0
-        )
+        security_violations = int(request.data.get('security_violations', 0))
+        violation_details = str(request.data.get('violation_details', ''))
+        is_terminated_by_security = bool(request.data.get('is_terminated_by_security', False))
+
+        if is_terminated_by_security or security_violations >= 2:
+            exec_res = {
+                'is_passed': False,
+                'status': 'FAILED_SECURITY',
+                'actual_output': 'Terminated by Security Protocol: Window/tab switch detected.',
+                'execution_time_ms': 0.0,
+                'error_detail': violation_details or 'Test terminated due to security violation.'
+            }
+            score = 0
+        else:
+            # Execute code in sandboxed runner
+            exec_res = run_and_validate_code(
+                code=code,
+                language=language,
+                expected_output=problem.expected_output,
+                timeout_sec=5.0
+            )
+            # Calculate score: 100% if passed, partial if runtime/syntax error
+            score = problem.points if exec_res['is_passed'] else (2 if exec_res['status'] != 'COMPILE_ERROR' and len(code) > 20 else 0)
 
         # Count prior attempts for this student & problem
         prior_attempts = Submission.objects.filter(
@@ -107,9 +125,6 @@ class ProblemSubmitSolutionView(views.APIView):
             problem=problem
         ).count()
         attempt_number = prior_attempts + 1
-
-        # Calculate score: 100% if passed, partial if runtime/syntax error
-        score = problem.points if exec_res['is_passed'] else (2 if exec_res['status'] != 'COMPILE_ERROR' and len(code) > 20 else 0)
 
         submission = Submission.objects.create(
             student=request.user,
@@ -124,6 +139,8 @@ class ProblemSubmitSolutionView(views.APIView):
             execution_time_ms=exec_res['execution_time_ms'],
             error_detail=exec_res['error_detail'],
             attempt_number=attempt_number,
+            security_violations=security_violations,
+            violation_details=violation_details,
             notes=notes,
             score=score
         )

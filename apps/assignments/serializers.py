@@ -58,6 +58,7 @@ class SubmissionDetailSerializer(serializers.ModelSerializer):
             'batch', 'batch_name', 'language', 'submitted_code',
             'actual_output', 'expected_output', 'is_passed', 'status',
             'execution_time_ms', 'error_detail', 'attempt_number',
+            'security_violations', 'violation_details',
             'notes', 'score', 'staff_feedback', 'submitted_at',
             'reviewed_at', 'reviewed_by', 'reviewed_by_name'
         ]
