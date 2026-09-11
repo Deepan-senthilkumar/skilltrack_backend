@@ -313,3 +313,108 @@ class PlatformCapability(models.Model):
 
     def __str__(self) -> str:
         return f"{str(self.number)} — {str(self.title)}"
+
+
+class TopicQuizQuestion(models.Model):
+    """MCQ Question in the Topic Question Bank (e.g. 20+ questions per topic)"""
+    OPTION_CHOICES = (
+        ('A', 'Option A'),
+        ('B', 'Option B'),
+        ('C', 'Option C'),
+        ('D', 'Option D'),
+    )
+
+    objects = models.Manager()
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name='quiz_questions')
+    question_text = models.TextField(help_text="The question prompt")
+    option_a = models.TextField(help_text="Choice A")
+    option_b = models.TextField(help_text="Choice B")
+    option_c = models.TextField(help_text="Choice C")
+    option_d = models.TextField(help_text="Choice D")
+    correct_option = models.CharField(max_length=2, choices=OPTION_CHOICES, default='A', help_text="Correct answer letter (A, B, C, or D)")
+    explanation = models.TextField(blank=True, default="", help_text="Detailed explanation shown during review")
+    order = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['topic', 'order', 'id']
+        verbose_name = "Topic Quiz Question"
+        verbose_name_plural = "Topic Quiz Questions"
+
+    def __str__(self) -> str:
+        return f"{self.topic.title} - Q#{self.order}: {self.question_text[:50]}"
+
+
+class StudentTopicProgress(models.Model):
+    """Tracks each student's progress and topic quiz pass/cooldown state"""
+    objects = models.Manager()
+    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='topic_progress_records')
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name='student_progress_records')
+    is_completed = models.BooleanField(default=False, help_text="True if student scored >= 50% on the topic quiz")
+    completed_at = models.DateTimeField(null=True, blank=True)
+    attempts_count = models.PositiveIntegerField(default=0)
+    last_score = models.PositiveIntegerField(default=0)
+    last_total = models.PositiveIntegerField(default=5)
+    last_percentage = models.FloatField(default=0.0)
+    last_passed = models.BooleanField(default=False)
+    can_reattempt_after = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="10-minute cooldown timestamp set if test was failed. Cannot re-attempt until this expires."
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('student', 'topic')
+        ordering = ['topic__order', 'id']
+        verbose_name = "Student Topic Progress"
+        verbose_name_plural = "Student Topic Progress Records"
+
+    @property
+    def is_in_cooldown(self) -> bool:
+        if not self.can_reattempt_after:
+            return False
+        return timezone.now() < self.can_reattempt_after
+
+    def cooldown_seconds_remaining(self) -> int:
+        if not self.is_in_cooldown or not self.can_reattempt_after:
+            return 0
+        diff = (self.can_reattempt_after - timezone.now()).total_seconds()
+        return max(0, int(diff))
+
+    def __str__(self) -> str:
+        status = "COMPLETED" if self.is_completed else "IN_PROGRESS"
+        return f"{self.student.username} -> {self.topic.title} [{status}] (Attempts: {self.attempts_count})"
+
+
+class TopicQuizAttempt(models.Model):
+    """Detailed audit log of every topic test/quiz attempt taken by a student"""
+    STATUS_CHOICES = (
+        ('PASSED', 'Passed (>= 50%)'),
+        ('FAILED_SCORE', 'Failed - Score Under 50%'),
+        ('FAILED_SECURITY', 'Terminated - Security Violation (Tab switch / devtools)'),
+    )
+
+    objects = models.Manager()
+    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='quiz_attempts')
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name='quiz_attempts')
+    score = models.PositiveIntegerField(default=0, help_text="Number of correct answers")
+    total_questions = models.PositiveIntegerField(default=5, help_text="Total questions served in this attempt")
+    percentage = models.FloatField(default=0.0, help_text="Percentage score achieved")
+    is_passed = models.BooleanField(default=False, help_text="True if percentage >= 50.0")
+    status = models.CharField(max_length=25, choices=STATUS_CHOICES, default='FAILED_SCORE')
+    security_violations = models.PositiveIntegerField(default=0, help_text="Count of security infractions recorded")
+    violation_details = models.TextField(blank=True, default="", help_text="Log of security warnings / exit triggers")
+    questions_data = models.JSONField(default=list, blank=True, help_text="Snapshot of the 5 questions & choices served")
+    selected_answers = models.JSONField(default=dict, blank=True, help_text="Map of question_id -> chosen option")
+    time_taken_seconds = models.PositiveIntegerField(default=0, help_text="Time taken to finish the test")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Topic Quiz Attempt"
+        verbose_name_plural = "Topic Quiz Attempts"
+
+    def __str__(self) -> str:
+        return f"{self.student.username} -> {self.topic.title}: {self.score}/{self.total_questions} ({self.percentage}%) [{self.status}]"
+

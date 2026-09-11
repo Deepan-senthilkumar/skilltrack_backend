@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+import random
 from django.utils import timezone
 from django.db.models import Count, Sum, Avg, Q
 from rest_framework import views, generics, status, permissions
@@ -8,13 +9,15 @@ from apps.assignments.permissions import IsInstructor
 from .models import (
     Subject, Module, Topic, CodeExample, Problem, TopicImage,
     Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord,
-    PlatformCapability
+    PlatformCapability, TopicQuizQuestion, StudentTopicProgress, TopicQuizAttempt
 )
 from .serializers import (
     SubjectSerializer, ModuleSerializer, TopicSerializer, CodeExampleSerializer, ProblemSerializer,
     BatchSerializer, BatchTopicProgressSerializer, StaffDailyLogSerializer,
     StudentAttendanceRecordSerializer, TopicImageSerializer,
-    PlatformCapabilitySerializer
+    PlatformCapabilitySerializer,
+    TopicQuizQuestionSerializer, StudentQuizQuestionSerializer,
+    StudentTopicProgressSerializer, TopicQuizAttemptSerializer
 )
 
 
@@ -608,3 +611,388 @@ class PlatformCapabilityListView(generics.ListAPIView):
     queryset = PlatformCapability.objects.filter(is_active=True).order_by('order', 'id')
     serializer_class = PlatformCapabilitySerializer
     permission_classes = [permissions.AllowAny]
+
+
+# =========================================================================
+# TOPIC QUIZ / KNOWLEDGE GATE SYSTEM
+# =========================================================================
+
+class StaffTopicQuizQuestionListCreateView(generics.ListCreateAPIView):
+    """Staff / Admin: List and create MCQs for topic question banks"""
+    serializer_class = TopicQuizQuestionSerializer
+    permission_classes = [IsInstructor]
+
+    def get_queryset(self):
+        topic_id = self.request.query_params.get('topic_id')
+        queryset = TopicQuizQuestion.objects.select_related('topic', 'topic__module', 'topic__module__subject').all()
+        if topic_id:
+            if topic_id.isdigit():
+                queryset = queryset.filter(topic_id=int(topic_id))
+            else:
+                queryset = queryset.filter(topic__topic_id=topic_id)
+        return queryset.order_by('topic', 'order', 'id')
+
+
+class StaffTopicQuizQuestionDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Staff / Admin: Retrieve, update, or delete a single MCQ"""
+    queryset = TopicQuizQuestion.objects.all()
+    serializer_class = TopicQuizQuestionSerializer
+    permission_classes = [IsInstructor]
+
+
+class StaffBulkUploadQuizQuestionsView(views.APIView):
+    """Staff / Admin: Bulk upload MCQs for a topic (e.g. 20+ questions)"""
+    permission_classes = [IsInstructor]
+
+    def post(self, request):
+        topic_id = request.data.get('topic_id')
+        questions = request.data.get('questions', [])
+
+        if not topic_id or not questions:
+            return Response({'error': 'topic_id and a list of questions are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        topic = None
+        if str(topic_id).isdigit():
+            topic = Topic.objects.filter(id=int(topic_id)).first()
+        else:
+            topic = Topic.objects.filter(topic_id=str(topic_id)).first()
+
+        if not topic:
+            return Response({'error': 'Topic not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        created_objs = []
+        current_max_order = TopicQuizQuestion.objects.filter(topic=topic).count()
+
+        for idx, q_data in enumerate(questions):
+            q_text = q_data.get('question_text', '').strip()
+            opt_a = q_data.get('option_a', '').strip()
+            opt_b = q_data.get('option_b', '').strip()
+            opt_c = q_data.get('option_c', '').strip()
+            opt_d = q_data.get('option_d', '').strip()
+            correct = q_data.get('correct_option', 'A').strip().upper()
+            expl = q_data.get('explanation', '').strip()
+            order = q_data.get('order') or (current_max_order + idx + 1)
+
+            if q_text and opt_a and opt_b:
+                created_objs.append(TopicQuizQuestion(
+                    topic=topic,
+                    question_text=q_text,
+                    option_a=opt_a,
+                    option_b=opt_b,
+                    option_c=opt_c or 'N/A',
+                    option_d=opt_d or 'N/A',
+                    correct_option=correct if correct in ['A', 'B', 'C', 'D'] else 'A',
+                    explanation=expl,
+                    order=order
+                ))
+
+        if created_objs:
+            TopicQuizQuestion.objects.bulk_create(created_objs)
+
+        total_now = TopicQuizQuestion.objects.filter(topic=topic).count()
+        return Response({
+            'success': True,
+            'created_count': len(created_objs),
+            'total_questions_in_bank': total_now,
+            'message': f'Successfully added {len(created_objs)} questions. Topic now has {total_now} total questions.'
+        })
+
+
+class TopicQuizStartView(views.APIView):
+    """Student: Starts a randomized 5-question test for a topic in the Secured Test Portal"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, topic_id):
+        topic = None
+        if str(topic_id).isdigit():
+            topic = Topic.objects.filter(id=int(topic_id)).first()
+        else:
+            topic = Topic.objects.filter(topic_id=str(topic_id)).first()
+
+        if not topic:
+            return Response({'error': 'Topic not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # 1. Check Cooldown
+        progress = StudentTopicProgress.objects.filter(student=request.user, topic=topic).first()
+        if progress and progress.is_in_cooldown:
+            remaining = progress.cooldown_seconds_remaining()
+            return Response({
+                'in_cooldown': True,
+                'cooldown_seconds_remaining': remaining,
+                'can_reattempt_after': progress.can_reattempt_after,
+                'error': f'Re-attempt cooldown active. Please re-read the study notes. You can re-attempt in {remaining // 60}m {remaining % 60}s.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        # 2. Fetch question bank
+        all_questions = list(TopicQuizQuestion.objects.filter(topic=topic))
+        if not all_questions:
+            return Response({
+                'error': 'No assessment questions configured for this topic yet. Please contact trainer/admin.',
+                'question_count': 0
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3. Random sample 5 questions from the bank (or all if < 5)
+        num_to_sample = min(5, len(all_questions))
+        sampled_questions = random.sample(all_questions, num_to_sample)
+
+        serializer = StudentQuizQuestionSerializer(sampled_questions, many=True)
+        return Response({
+            'topic_id': topic.id,
+            'topic_title': topic.title,
+            'topic_slug': topic.topic_id,
+            'total_questions_in_bank': len(all_questions),
+            'questions_served_count': num_to_sample,
+            'pass_percentage_required': 50.0,
+            'min_score_required': (num_to_sample + 1) // 2,
+            'cooldown_minutes_on_fail': 10,
+            'questions': serializer.data
+        })
+
+
+class TopicQuizSubmitView(views.APIView):
+    """Student: Evaluates answers for the topic quiz, records attempt, and updates progression & cooldown"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, topic_id):
+        topic = None
+        if str(topic_id).isdigit():
+            topic = Topic.objects.filter(id=int(topic_id)).first()
+        else:
+            topic = Topic.objects.filter(topic_id=str(topic_id)).first()
+
+        if not topic:
+            return Response({'error': 'Topic not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        data = request.data
+        answers = data.get('answers', {})  # { "12": "A", "15": "C" }
+        question_ids = data.get('question_ids', [])
+        time_taken = int(data.get('time_taken_seconds', 0))
+        security_violations = int(data.get('security_violations', 0))
+        violation_details = str(data.get('violation_details', ''))
+        is_terminated_by_security = bool(data.get('is_terminated_by_security', False))
+
+        now = timezone.now()
+        progress, _ = StudentTopicProgress.objects.get_or_create(student=request.user, topic=topic)
+
+        # If security violation failure
+        if is_terminated_by_security or security_violations >= 2:
+            status_code = 'FAILED_SECURITY'
+            is_passed = False
+            score = 0
+            total_questions = len(question_ids) or 5
+            percentage = 0.0
+            cooldown_until = now + timedelta(minutes=10)
+
+            progress.attempts_count += 1
+            progress.last_score = 0
+            progress.last_total = total_questions
+            progress.last_percentage = 0.0
+            progress.last_passed = False
+            progress.can_reattempt_after = cooldown_until
+            progress.save()
+
+            attempt = TopicQuizAttempt.objects.create(
+                student=request.user,
+                topic=topic,
+                score=0,
+                total_questions=total_questions,
+                percentage=0.0,
+                is_passed=False,
+                status=status_code,
+                security_violations=security_violations,
+                violation_details=violation_details or "Terminated due to multiple tab switches or window exits.",
+                questions_data=[],
+                selected_answers=answers,
+                time_taken_seconds=time_taken
+            )
+
+            return Response({
+                'is_passed': False,
+                'status': status_code,
+                'score': 0,
+                'total_questions': total_questions,
+                'percentage': 0.0,
+                'security_violations': security_violations,
+                'can_reattempt_after': cooldown_until,
+                'cooldown_seconds_remaining': 600,
+                'message': '❌ Test Terminated: Security violations detected. You must wait 10 minutes before re-attempting.'
+            })
+
+        # Fetch actual question objects
+        if not question_ids:
+            question_ids = [int(qid) for qid in answers.keys() if str(qid).isdigit()]
+
+        questions = TopicQuizQuestion.objects.filter(id__in=question_ids, topic=topic)
+        total_questions = len(questions) or 1
+        score = 0
+        questions_review = []
+        questions_snapshot = []
+
+        for q in questions:
+            user_choice = str(answers.get(str(q.id)) or answers.get(q.id) or '').strip().upper()
+            is_correct = (user_choice == q.correct_option)
+            if is_correct:
+                score += 1
+
+            review_item = {
+                'id': q.id,
+                'question_text': q.question_text,
+                'option_a': q.option_a,
+                'option_b': q.option_b,
+                'option_c': q.option_c,
+                'option_d': q.option_d,
+                'user_choice': user_choice,
+                'correct_option': q.correct_option,
+                'is_correct': is_correct,
+                'explanation': q.explanation
+            }
+            questions_review.append(review_item)
+            questions_snapshot.append(review_item)
+
+        percentage = round((score / total_questions * 100), 1)
+        is_passed = (percentage >= 50.0)
+        status_code = 'PASSED' if is_passed else 'FAILED_SCORE'
+
+        if is_passed:
+            cooldown_until = None
+            progress.is_completed = True
+            if not progress.completed_at:
+                progress.completed_at = now
+        else:
+            cooldown_until = now + timedelta(minutes=10)
+
+        progress.attempts_count += 1
+        progress.last_score = score
+        progress.last_total = total_questions
+        progress.last_percentage = percentage
+        progress.last_passed = is_passed
+        progress.can_reattempt_after = cooldown_until
+        progress.save()
+
+        attempt = TopicQuizAttempt.objects.create(
+            student=request.user,
+            topic=topic,
+            score=score,
+            total_questions=total_questions,
+            percentage=percentage,
+            is_passed=is_passed,
+            status=status_code,
+            security_violations=security_violations,
+            violation_details=violation_details,
+            questions_data=questions_snapshot,
+            selected_answers=answers,
+            time_taken_seconds=time_taken
+        )
+
+        return Response({
+            'attempt_id': attempt.id,
+            'is_passed': is_passed,
+            'status': status_code,
+            'score': score,
+            'total_questions': total_questions,
+            'percentage': percentage,
+            'pass_threshold_percentage': 50.0,
+            'security_violations': security_violations,
+            'can_reattempt_after': cooldown_until,
+            'cooldown_seconds_remaining': progress.cooldown_seconds_remaining(),
+            'review': questions_review,
+            'topic_completed': progress.is_completed,
+            'message': '🎉 Congratulations! You passed the topic assessment!' if is_passed else '❌ You did not reach the 50% pass mark. Please re-read the study notes.'
+        })
+
+
+class StudentTopicProgressListView(generics.ListAPIView):
+    """Student: Returns all topic completion and cooldown statuses for the student"""
+    serializer_class = StudentTopicProgressSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return StudentTopicProgress.objects.filter(student=self.request.user).select_related('topic')
+
+
+class StaffQuizAttemptAnalyticsView(views.APIView):
+    """Staff / Admin: Detailed logs and metrics of all student quiz attempts"""
+    permission_classes = [IsInstructor]
+
+    def get(self, request):
+        topic_id = request.query_params.get('topic_id')
+        student_id = request.query_params.get('student_id')
+        status_filter = request.query_params.get('status')
+        search = request.query_params.get('search', '').strip()
+
+        queryset = TopicQuizAttempt.objects.select_related('student', 'topic', 'topic__module', 'topic__module__subject').all()
+
+        if topic_id:
+            if topic_id.isdigit():
+                queryset = queryset.filter(topic_id=int(topic_id))
+            else:
+                queryset = queryset.filter(topic__topic_id=topic_id)
+
+        if student_id and student_id.isdigit():
+            queryset = queryset.filter(student_id=int(student_id))
+
+        if status_filter and status_filter != 'ALL':
+            queryset = queryset.filter(status=status_filter)
+
+        if search:
+            queryset = queryset.filter(
+                Q(student__username__icontains=search) |
+                Q(student__first_name__icontains=search) |
+                Q(student__last_name__icontains=search) |
+                Q(student__mobile_number__icontains=search) |
+                Q(topic__title__icontains=search)
+            )
+
+        # Summary KPIs
+        total_attempts = queryset.count()
+        passed_attempts = queryset.filter(is_passed=True).count()
+        failed_attempts = total_attempts - passed_attempts
+        pass_rate_pct = round((passed_attempts / total_attempts * 100), 1) if total_attempts > 0 else 0
+        avg_score_pct = round(queryset.aggregate(a=Avg('percentage'))['a'] or 0.0, 1)
+        security_infractions_sum = queryset.aggregate(s=Sum('security_violations'))['s'] or 0
+
+        paginator = StandardResultsSetPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        serialized_attempts = TopicQuizAttemptSerializer(page, many=True).data
+
+        return paginator.get_paginated_response({
+            'kpis': {
+                'total_attempts': total_attempts,
+                'passed_attempts': passed_attempts,
+                'failed_attempts': failed_attempts,
+                'pass_rate_pct': pass_rate_pct,
+                'avg_score_pct': avg_score_pct,
+                'security_infractions_sum': security_infractions_sum,
+            },
+            'attempts': serialized_attempts
+        })
+
+
+class StaffResetQuizCooldownView(views.APIView):
+    """Staff / Admin: Clear cooldown timer for a student on a specific topic"""
+    permission_classes = [IsInstructor]
+
+    def post(self, request):
+        student_id = request.data.get('student_id')
+        topic_id = request.data.get('topic_id')
+
+        if not student_id or not topic_id:
+            return Response({'error': 'student_id and topic_id are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        topic_filter = {'id': int(topic_id)} if str(topic_id).isdigit() else {'topic_id': str(topic_id)}
+        topic = Topic.objects.filter(**topic_filter).first()
+        if not topic:
+            return Response({'error': 'Topic not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        progress = StudentTopicProgress.objects.filter(student_id=student_id, topic=topic).first()
+        if not progress:
+            return Response({'error': 'No progress record found for this student and topic'}, status=status.HTTP_404_NOT_FOUND)
+
+        progress.can_reattempt_after = None
+        progress.save()
+
+        return Response({
+            'success': True,
+            'message': f'Successfully cleared cooldown for student on topic: {topic.title}'
+        })
+

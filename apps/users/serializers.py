@@ -1,9 +1,8 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from django.contrib.auth import get_user_model
+from rest_framework_simplejwt.tokens import RefreshToken
+from apps.users.models import User
 from apps.curriculum.models import Subject
-
-User = get_user_model()
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -168,7 +167,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             raise serializers.ValidationError("This account has been deactivated.")
 
         # Generate tokens
-        refresh = self.get_token(user)
+        refresh = RefreshToken.for_user(user)
         data = {
             'refresh': str(refresh),
             'access': str(refresh.access_token),

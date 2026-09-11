@@ -39,6 +39,7 @@ class Submission(models.Model):
         ('COMPILE_ERROR', 'Compilation Error'),
         ('RUNTIME_ERROR', 'Runtime Error'),
         ('TIMEOUT', 'Execution Timeout'),
+        ('FAILED_SECURITY', 'Terminated - Security Violation'),
         ('SUBMITTED', 'Submitted - Pending Review'),
     )
 
@@ -54,6 +55,8 @@ class Submission(models.Model):
     execution_time_ms = models.FloatField(default=0.0, help_text="Execution duration in milliseconds")
     error_detail = models.TextField(blank=True, default="", help_text="Full compiler or runtime trace")
     attempt_number = models.PositiveIntegerField(default=1)
+    security_violations = models.PositiveIntegerField(default=0, help_text="Security tab switch or devtools infractions")
+    violation_details = models.TextField(blank=True, default="", help_text="Security infraction logs")
     notes = models.TextField(blank=True, default="", help_text="Student comments or notes")
     score = models.PositiveIntegerField(null=True, blank=True)
     staff_feedback = models.TextField(blank=True, default="")

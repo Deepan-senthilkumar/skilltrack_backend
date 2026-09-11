@@ -198,10 +198,41 @@ def execute_c_code(code: str, timeout_sec: float = 5.0) -> Dict[str, Any]:
             }
 
 
+import difflib
+
+
+def calculate_output_similarity(actual: str, expected: str) -> float:
+    """Calculates the match percentage between actual output and expected output."""
+    norm_actual = normalize_output(actual).strip()
+    norm_expected = normalize_output(expected).strip()
+
+    if not norm_expected:
+        return 100.0 if norm_actual else 100.0
+    if not norm_actual:
+        return 0.0
+    if norm_actual == norm_expected:
+        return 100.0
+
+    # Character and sequence similarity
+    matcher = difflib.SequenceMatcher(None, norm_actual.lower(), norm_expected.lower())
+    seq_ratio = matcher.ratio() * 100.0
+
+    # Word/token-level overlap
+    actual_tokens = set(norm_actual.lower().split())
+    expected_tokens = set(norm_expected.lower().split())
+    if expected_tokens:
+        token_ratio = (len(actual_tokens.intersection(expected_tokens)) / len(expected_tokens)) * 100.0
+        similarity = max(seq_ratio, (seq_ratio * 0.5 + token_ratio * 0.5))
+    else:
+        similarity = seq_ratio
+
+    return round(min(100.0, max(0.0, similarity)), 1)
+
+
 def run_and_validate_code(code: str, language: str, expected_output: str = "", timeout_sec: float = 5.0) -> Dict[str, Any]:
     """
     Sandboxed compilation and execution of code across supported languages.
-    Compares the actual console output against the admin-configured expected output.
+    Compares actual console output against expected output using a 70%+ match threshold.
     """
     lang = (language or "python").lower().strip()
 
@@ -220,25 +251,21 @@ def run_and_validate_code(code: str, language: str, expected_output: str = "", t
     exec_time = res.get("execution_time_ms", 0.0)
     exec_status = res.get("status", "RUNTIME_ERROR")
 
-    # If execution succeeded, evaluate output against expected output
+    # If execution succeeded, evaluate output against expected output (70%+ threshold)
     if exec_status == "SUCCESS":
-        norm_actual = normalize_output(actual_out)
-        norm_expected = normalize_output(expected_output)
-
-        if not norm_expected:
-            # If no expected output is set, non-empty execution passes
-            is_passed = bool(norm_actual or not error_det)
-            final_status = "PASSED" if is_passed else "FAILED"
-        else:
-            is_passed = (norm_actual == norm_expected)
-            final_status = "PASSED" if is_passed else "FAILED"
+        similarity_pct = calculate_output_similarity(actual_out, expected_output)
+        is_passed = (similarity_pct >= 70.0)
+        final_status = "PASSED" if is_passed else "FAILED"
     else:
+        similarity_pct = 0.0
         is_passed = False
         final_status = exec_status
 
     return {
         "is_passed": is_passed,
         "status": final_status,
+        "match_percentage": similarity_pct,
+        "pass_threshold_percentage": 70.0,
         "actual_output": actual_out,
         "expected_output": expected_output,
         "error_detail": error_det,

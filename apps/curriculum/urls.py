@@ -10,7 +10,10 @@ from .views import (
     BatchTopicProgressListView, BatchTopicProgressToggleView,
     StaffDailyLogListCreateView, StaffDailyLogDetailView,
     DailyBatchMatrixView, ReportingAnalyticsView,
-    PlatformCapabilityListView
+    PlatformCapabilityListView,
+    StaffTopicQuizQuestionListCreateView, StaffTopicQuizQuestionDetailView,
+    StaffBulkUploadQuizQuestionsView, TopicQuizStartView, TopicQuizSubmitView,
+    StudentTopicProgressListView, StaffQuizAttemptAnalyticsView, StaffResetQuizCooldownView
 )
 
 urlpatterns = [
@@ -43,6 +46,20 @@ urlpatterns = [
     path('curriculum/problems/<int:pk>/', ProblemDetailView.as_view(), name='problem-detail'),
     path('staff/problems/', StaffProblemListCreateView.as_view(), name='staff-problem-list-create'),
     path('staff/problems/<int:pk>/', StaffProblemDetailView.as_view(), name='staff-problem-detail'),
+
+    # Topic Quiz Bank & Knowledge Gate (MCQs)
+    path('staff/quiz-questions/', StaffTopicQuizQuestionListCreateView.as_view(), name='staff-quiz-question-list-create'),
+    path('staff/quiz-questions/<int:pk>/', StaffTopicQuizQuestionDetailView.as_view(), name='staff-quiz-question-detail'),
+    path('staff/quiz-questions/bulk/', StaffBulkUploadQuizQuestionsView.as_view(), name='staff-quiz-questions-bulk-upload'),
+    
+    # Student Quiz Execution & Secured Knowledge Gate
+    path('curriculum/topics/<slug:topic_id>/quiz/start/', TopicQuizStartView.as_view(), name='topic-quiz-start'),
+    path('curriculum/topics/<slug:topic_id>/quiz/submit/', TopicQuizSubmitView.as_view(), name='topic-quiz-submit'),
+    path('my-topic-progress/', StudentTopicProgressListView.as_view(), name='student-topic-progress-list'),
+
+    # Staff Quiz Analytics & Cooldown Controls
+    path('staff/quiz-analytics/', StaffQuizAttemptAnalyticsView.as_view(), name='staff-quiz-analytics'),
+    path('staff/quiz-cooldown/reset/', StaffResetQuizCooldownView.as_view(), name='staff-quiz-cooldown-reset'),
 
     # Batches (Duplicate courses running in parallel across batches)
     path('batches/', BatchListCreateView.as_view(), name='batch-list-create'),

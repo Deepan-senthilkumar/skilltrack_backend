@@ -1,15 +1,11 @@
-from django.test import TestCase
-from django.contrib.auth import get_user_model
-from rest_framework.test import APIClient
+from rest_framework.test import APITestCase
 from rest_framework import status
+from apps.users.models import User
 from apps.curriculum.models import Subject
 
-User = get_user_model()
 
-
-class StudentAuthTests(TestCase):
+class StudentAuthTests(APITestCase):
     def setUp(self):
-        self.client = APIClient()
         self.subject = Subject.objects.create(
             name='Django Full Stack',
             slug='django',
