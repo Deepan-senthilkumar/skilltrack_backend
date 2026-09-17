@@ -6,7 +6,7 @@ from rest_framework.pagination import PageNumberPagination
 from apps.curriculum.models import Problem, Module, Batch
 from .models import ProblemAccess, Submission
 from .permissions import IsInstructor
-from .code_runner import run_and_validate_code
+from .code_runner import run_problem_test_cases, run_and_validate_code
 from .serializers import (
     ProblemAccessUpdateSerializer,
     BulkModuleUnlockSerializer,
@@ -27,7 +27,7 @@ class StandardResultsSetPagination(PageNumberPagination):
 class ProblemTestRunView(views.APIView):
     """
     Executes student code in a sandboxed runner and returns live output, errors,
-    execution time, and auto-validation test result without saving a final submission.
+    execution time, and auto-validation test results across visible test cases (plus custom input).
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -43,11 +43,16 @@ class ProblemTestRunView(views.APIView):
         code = serializer.validated_data['code']
         language = serializer.validated_data.get('language') or problem.language or 'python'
         expected_output = serializer.validated_data.get('expected_output') or problem.expected_output
+        custom_input = serializer.validated_data.get('custom_input')
 
-        result = run_and_validate_code(
+        result = run_problem_test_cases(
             code=code,
             language=language,
+            test_criteria=problem.test_criteria,
+            problem_title=problem.title,
             expected_output=expected_output,
+            is_submission=False,
+            custom_input=custom_input,
             timeout_sec=5.0
         )
 
@@ -59,6 +64,10 @@ class ProblemTestRunView(views.APIView):
             'status': result['status'],
             'match_percentage': result.get('match_percentage', 0.0),
             'pass_threshold_percentage': 70.0,
+            'total_test_cases': result.get('total_test_cases', 0),
+            'passed_test_cases': result.get('passed_test_cases', 0),
+            'hidden_test_cases_count': result.get('hidden_test_cases_count', 0),
+            'test_cases': result.get('test_cases', []),
             'actual_output': result['actual_output'],
             'expected_output': result['expected_output'],
             'error_detail': result['error_detail'],
@@ -68,9 +77,9 @@ class ProblemTestRunView(views.APIView):
 
 class ProblemSubmitSolutionView(views.APIView):
     """
-    Student submits solution. Compiles/runs code in sandboxed runner,
-    compares actual vs expected output, records execution time, full errors,
-    attempt number, and persists the submission record.
+    Student submits solution. Compiles/runs code in sandboxed runner across
+    ALL 5+ test cases (Visible + Hidden), records execution time, full errors,
+    attempt number, and persists the submission record with proportional scoring.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -105,19 +114,47 @@ class ProblemSubmitSolutionView(views.APIView):
                 'status': 'FAILED_SECURITY',
                 'actual_output': 'Terminated by Security Protocol: Window/tab switch detected.',
                 'execution_time_ms': 0.0,
-                'error_detail': violation_details or 'Test terminated due to security violation.'
+                'error_detail': violation_details or 'Test terminated due to security violation.',
+                'total_test_cases': 1,
+                'passed_test_cases': 0,
+                'test_cases': []
             }
             score = 0
+            actual_output_summary = exec_res['actual_output']
         else:
-            # Execute code in sandboxed runner
-            exec_res = run_and_validate_code(
+            # Execute code across ALL test cases (visible sample + hidden test cases)
+            exec_res = run_problem_test_cases(
                 code=code,
                 language=language,
+                test_criteria=problem.test_criteria,
+                problem_title=problem.title,
                 expected_output=problem.expected_output,
+                is_submission=True,
                 timeout_sec=5.0
             )
-            # Calculate score: 100% if passed, partial if runtime/syntax error
-            score = problem.points if exec_res['is_passed'] else (2 if exec_res['status'] != 'COMPILE_ERROR' and len(code) > 20 else 0)
+
+            total_cases = exec_res.get('total_test_cases', 1) or 1
+            passed_cases = exec_res.get('passed_test_cases', 0)
+
+            # Proportional score calculation: 100% if all passed, proportional for passing partial
+            if exec_res['is_passed']:
+                score = problem.points
+            elif passed_cases > 0:
+                score = max(1, round((passed_cases / total_cases) * problem.points))
+            else:
+                score = 2 if exec_res['status'] != 'COMPILE_ERROR' and len(code) > 20 else 0
+
+            # Formatted test summary
+            summary_lines = [
+                f"Test Verification: {passed_cases}/{total_cases} Passed (Status: {exec_res['status']})"
+            ]
+            for tc in exec_res.get('test_cases', []):
+                tc_status = "PASS" if tc.get('is_passed') else "FAIL"
+                hidden_tag = " [Hidden]" if tc.get('is_hidden') else ""
+                summary_lines.append(f"• {tc.get('name')}{hidden_tag}: {tc_status}")
+            summary_lines.append("\n--- Primary Output ---")
+            summary_lines.append(exec_res.get('actual_output', ''))
+            actual_output_summary = "\n".join(summary_lines)
 
         # Count prior attempts for this student & problem
         prior_attempts = Submission.objects.filter(
@@ -132,7 +169,7 @@ class ProblemSubmitSolutionView(views.APIView):
             batch=batch,
             language=language,
             submitted_code=code,
-            actual_output=exec_res['actual_output'],
+            actual_output=actual_output_summary,
             expected_output=problem.expected_output,
             is_passed=exec_res['is_passed'],
             status=exec_res['status'],
@@ -145,8 +182,14 @@ class ProblemSubmitSolutionView(views.APIView):
             score=score
         )
 
+        response_data = SubmissionDetailSerializer(submission).data
+        response_data['total_test_cases'] = exec_res.get('total_test_cases', 0)
+        response_data['passed_test_cases'] = exec_res.get('passed_test_cases', 0)
+        response_data['test_cases'] = exec_res.get('test_cases', [])
+        response_data['hidden_test_cases_count'] = exec_res.get('hidden_test_cases_count', 0)
+
         return Response(
-            SubmissionDetailSerializer(submission).data,
+            response_data,
             status=status.HTTP_201_CREATED
         )
 

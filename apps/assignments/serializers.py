@@ -39,6 +39,7 @@ class TestRunSerializer(serializers.Serializer):
     code = serializers.CharField(required=True)
     language = serializers.CharField(required=False, default='python')
     expected_output = serializers.CharField(required=False, allow_blank=True, default='')
+    custom_input = serializers.CharField(required=False, allow_blank=True, allow_null=True, default=None)
 
 
 class SubmissionDetailSerializer(serializers.ModelSerializer):

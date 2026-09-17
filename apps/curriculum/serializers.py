@@ -121,8 +121,6 @@ class ProblemSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not getattr(request, 'user', None) or not request.user.is_authenticated:
             return None
-        if getattr(request.user, 'is_staff', False) or getattr(request.user, 'role', '') == 'STAFF':
-            return None
         sub = obj.submissions.filter(student=request.user).order_by('-submitted_at').first()
         if not sub:
             return None
@@ -134,6 +132,25 @@ class ProblemSerializer(serializers.ModelSerializer):
             'submitted_code': sub.submitted_code,
             'submitted_at': sub.submitted_at,
         }
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        is_staff = request and request.user and (getattr(request.user, 'is_staff', False) or getattr(request.user, 'role', '') in ['admin', 'instructor', 'STAFF', 'ADMIN'])
+        # If not staff, mask hidden test cases in test_criteria
+        if not is_staff and isinstance(data.get('test_criteria'), list):
+            sanitized = []
+            for tc in data['test_criteria']:
+                if isinstance(tc, dict) and tc.get('is_hidden'):
+                    sanitized.append({
+                        'id': tc.get('id'),
+                        'name': tc.get('name', 'Hidden Test Case'),
+                        'is_hidden': True
+                    })
+                else:
+                    sanitized.append(tc)
+            data['test_criteria'] = sanitized
+        return data
 
 
 class CodeExampleSerializer(serializers.ModelSerializer):

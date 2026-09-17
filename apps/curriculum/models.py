@@ -1,3 +1,4 @@
+import uuid
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
@@ -34,7 +35,7 @@ class Subject(models.Model):
     def save(self, *args, **kwargs):
         if not self.slug:
             from django.utils.text import slugify
-            base_slug = str(slugify(self.name)) or "subject"
+            base_slug = slugify(self.name) or "subject"
             slug = base_slug
             counter = 1
             while Subject.objects.filter(slug=slug).exclude(pk=self.pk).exists():
@@ -44,7 +45,7 @@ class Subject(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:
-        return str(self.name)
+        return self.name
 
 
 class Module(models.Model):
@@ -65,7 +66,7 @@ class Module(models.Model):
 
     def __str__(self) -> str:
         prefix = f"[{self.subject.name}] " if self.subject else ""
-        return f"{prefix}[{str(self.level).upper()}] {str(self.name)}"
+        return f"{prefix}[{self.level.upper()}] {self.name}"
 
 
 class Topic(models.Model):
@@ -83,7 +84,7 @@ class Topic(models.Model):
     def save(self, *args, **kwargs):
         if not self.topic_id:
             from django.utils.text import slugify
-            base_slug = str(slugify(self.title)) or "topic"
+            base_slug = slugify(self.title) or "topic"
             topic_id = base_slug
             counter = 1
             while Topic.objects.filter(topic_id=topic_id).exclude(pk=self.pk).exists():
@@ -93,7 +94,7 @@ class Topic(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:
-        return f"{str(self.module.subject.name) if self.module and self.module.subject else ''} -> {str(self.title)}"
+        return f"{self.module.subject.name if self.module and self.module.subject else ''} -> {self.title}"
 
 
 class CodeExample(models.Model):
@@ -107,7 +108,7 @@ class CodeExample(models.Model):
         ordering = ['order', 'id']
 
     def __str__(self) -> str:
-        return f"{str(self.topic.title)} - {str(self.label)}"
+        return f"{self.topic.title} - {self.label}"
 
 
 class Problem(models.Model):
@@ -145,7 +146,7 @@ class Problem(models.Model):
         ordering = ['order', 'id']
 
     def __str__(self) -> str:
-        return f"{str(self.topic.title)} - Lab #{self.order}: {str(self.title)} [{str(self.language)}]"
+        return f"{self.topic.title} - Lab #{self.order}: {self.title} [{self.language}]"
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
@@ -167,7 +168,23 @@ class TopicImage(models.Model):
         ordering = ['order', 'id']
 
     def __str__(self) -> str:
-        return f"{str(self.topic.title)} - Image #{self.order}"
+        return f"{self.topic.title} - Image #{self.order}"
+
+
+class UploadedMedia(models.Model):
+    objects = models.Manager()
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    filename = models.CharField(max_length=255, unique=True, db_index=True)
+    content_type = models.CharField(max_length=100, default='image/png')
+    data = models.BinaryField(help_text="Binary image payload stored in database")
+    caption = models.CharField(max_length=300, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self) -> str:
+        return f"{self.filename} ({self.content_type})"
 
 
 class Batch(models.Model):
@@ -215,7 +232,7 @@ class Batch(models.Model):
         return self.students.count()  # type: ignore[union-attr]
 
     def __str__(self) -> str:
-        return f"{str(self.name)} ({str(self.course.name)}) - [{str(self.status)}]"
+        return f"{self.name} ({self.course.name}) - [{self.status}]"
 
 
 class BatchTopicProgress(models.Model):
@@ -239,7 +256,7 @@ class BatchTopicProgress(models.Model):
 
     def __str__(self) -> str:
         status = "DONE" if self.is_completed else "PENDING"
-        return f"{str(self.batch.name)} - {str(self.topic.title)} [{status}]"
+        return f"{self.batch.name} - {self.topic.title} [{status}]"
 
 
 class StaffDailyLog(models.Model):
@@ -268,7 +285,7 @@ class StaffDailyLog(models.Model):
         ordering = ['-date', '-created_at']
 
     def __str__(self) -> str:
-        return f"{self.date} | {str(self.batch.name)} | {str(self.session_type)} ({self.students_attended}/{self.total_enrolled})"
+        return f"{self.date} | {self.batch.name} | {self.session_type} ({self.students_attended}/{self.total_enrolled})"
 
 
 class StudentAttendanceRecord(models.Model):
@@ -312,7 +329,7 @@ class PlatformCapability(models.Model):
         verbose_name_plural = "Platform Capabilities / Feature Cards"
 
     def __str__(self) -> str:
-        return f"{str(self.number)} — {str(self.title)}"
+        return f"{self.number} — {self.title}"
 
 
 class TopicQuizQuestion(models.Model):

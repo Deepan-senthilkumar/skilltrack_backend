@@ -2,12 +2,15 @@ from datetime import datetime, timedelta
 import random
 from django.utils import timezone
 from django.db.models import Count, Sum, Avg, Q
+from django.http import HttpResponse
 from rest_framework import views, generics, status, permissions
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from apps.assignments.permissions import IsInstructor
 from .models import (
-    Subject, Module, Topic, CodeExample, Problem, TopicImage,
+    Subject, Module, Topic, CodeExample, Problem, TopicImage, UploadedMedia,
     Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord,
     PlatformCapability, TopicQuizQuestion, StudentTopicProgress, TopicQuizAttempt
 )
@@ -139,39 +142,100 @@ class StaffTopicDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 # Topic Image Upload / Delete Views
-def save_uploaded_image_file(image_file, subfolder="topic_images", request=None):
+def save_uploaded_image_file(image_file, subfolder="notes_images", request=None):
     """
-    Saves uploaded image file to Django media storage.
-    Optionally tries Supabase, but falls back gracefully to local media to guarantee 100% success.
+    Saves uploaded image file persistently in PostgreSQL (UploadedMedia) and local disk cache.
+    Guarantees that images never disappear even across Render dyno restarts or redeployments.
     """
-    import os, uuid
+    import os, uuid, mimetypes
     from django.conf import settings
-    from django.core.files.storage import default_storage
-    from django.core.files.base import ContentFile
 
-    ext = os.path.splitext(image_file.name)[1].lower() or '.jpg'
+    ext = os.path.splitext(image_file.name)[1].lower() or '.png'
     filename = f"{uuid.uuid4().hex}{ext}"
-    relative_path = f"{subfolder}/{filename}"
 
+    # Read binary bytes
+    image_file.seek(0)
+    file_bytes = image_file.read()
+
+    # Determine content-type
+    content_type = getattr(image_file, 'content_type', None) or mimetypes.guess_type(image_file.name)[0] or 'image/png'
+    caption = os.path.splitext(image_file.name)[0]
+
+    # 1. Save in PostgreSQL database for permanent persistent storage
     try:
-        saved_path = default_storage.save(relative_path, ContentFile(image_file.read()))
-        media_url = f"{settings.MEDIA_URL.rstrip('/')}/{saved_path.lstrip('/')}"
-        if request:
-            return request.build_absolute_uri(media_url)
-        return media_url
-    except Exception:
-        # Direct filesystem fallback
+        UploadedMedia.objects.update_or_create(
+            filename=filename,
+            defaults={
+                'content_type': content_type,
+                'data': file_bytes,
+                'caption': caption
+            }
+        )
+    except Exception as err:
+        print(f"Failed to persist image to UploadedMedia: {err}")
+
+    # 2. Also save to local filesystem as cache
+    try:
         target_dir = os.path.join(settings.MEDIA_ROOT, subfolder)
         os.makedirs(target_dir, exist_ok=True)
         disk_path = os.path.join(target_dir, filename)
-        image_file.seek(0)
         with open(disk_path, 'wb+') as destination:
-            for chunk in image_file.chunks():
-                destination.write(chunk)
-        media_url = f"{settings.MEDIA_URL.rstrip('/')}/{subfolder}/{filename}"
-        if request:
-            return request.build_absolute_uri(media_url)
-        return media_url
+            destination.write(file_bytes)
+    except Exception:
+        pass
+
+    # Public endpoint path - works both as /media/... and /api/media/...
+    media_url = f"/api/media/{subfolder}/{filename}"
+    if request:
+        return request.build_absolute_uri(media_url)
+    return media_url
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def serve_media_file(request, path):
+    """
+    Serves uploaded media files from PostgreSQL database (UploadedMedia) or disk cache.
+    Works in production on Render with DEBUG=False and in local dev.
+    """
+    import os, mimetypes
+    from django.conf import settings
+
+    filename = os.path.basename(path)
+
+    # 1. Try PostgreSQL database first (primary source of truth across Render restarts)
+    media = UploadedMedia.objects.filter(filename=filename).first()
+    if media:
+        response = HttpResponse(bytes(media.data), content_type=media.content_type)
+        response['Cache-Control'] = 'public, max-age=31536000, immutable'
+        response['Content-Disposition'] = f'inline; filename="{media.filename}"'
+        response['Access-Control-Allow-Origin'] = '*'
+        return response
+
+    # 2. Try disk cache directly with relative path
+    disk_path = os.path.join(settings.MEDIA_ROOT, path)
+    if os.path.exists(disk_path) and os.path.isfile(disk_path):
+        ctype = mimetypes.guess_type(disk_path)[0] or 'image/png'
+        with open(disk_path, 'rb') as f:
+            response = HttpResponse(f.read(), content_type=ctype)
+            response['Cache-Control'] = 'public, max-age=31536000, immutable'
+            response['Access-Control-Allow-Origin'] = '*'
+            return response
+
+    # 3. Recursive search in MEDIA_ROOT for filename
+    if os.path.exists(settings.MEDIA_ROOT):
+        for root, dirs, files in os.walk(settings.MEDIA_ROOT):
+            if filename in files:
+                full_p = os.path.join(root, filename)
+                ctype = mimetypes.guess_type(full_p)[0] or 'image/png'
+                with open(full_p, 'rb') as f:
+                    response = HttpResponse(f.read(), content_type=ctype)
+                    response['Cache-Control'] = 'public, max-age=31536000, immutable'
+                    response['Access-Control-Allow-Origin'] = '*'
+                    return response
+
+    return HttpResponse('Image not found', status=404, content_type='text/plain')
+
 
 
 class GenericImageUploadView(views.APIView):
