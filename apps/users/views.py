@@ -74,7 +74,10 @@ class AdminUserListCreateView(APIView):
 
     def get(self, request):
         role = request.query_params.get('role')
-        queryset = User.objects.all().order_by('-date_joined')
+        queryset = User.objects.all().select_related('assigned_subject').prefetch_related(
+            'assigned_batches__course',
+            'enrolled_batches__course'
+        ).order_by('-date_joined')
         if role:
             queryset = queryset.filter(role=role.upper())
         search = request.query_params.get('search')

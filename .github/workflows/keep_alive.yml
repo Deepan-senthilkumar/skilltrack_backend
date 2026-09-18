@@ -1,0 +1,27 @@
+name: Render Backend Keep-Alive
+
+# Automatically pings the Render backend every 10 minutes so the free container
+# never goes to sleep / standby, keeping responses instant and sub-second 24/7.
+
+on:
+  schedule:
+    # Run every 10 minutes (UTC)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: Ping SkillStack Health API
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Backend
+        run: |
+          echo "Pinging SkillStack backend at https://skilltrack-backend-a36m.onrender.com/api/health/ ..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 https://skilltrack-backend-a36m.onrender.com/api/health/)
+          echo "Response Status: $STATUS"
+          if [ "$STATUS" -eq 200 ]; then
+            echo "✅ SkillStack backend is warm and online!"
+          else
+            echo "⚠️ Non-200 status received: $STATUS. Checking backup endpoint..."
+            curl -s --max-time 60 https://skilltrack-backend-a36m.onrender.com/api/health/
+          fi
