@@ -42,8 +42,16 @@ class ProblemTestRunView(views.APIView):
 
         code = serializer.validated_data['code']
         language = serializer.validated_data.get('language') or problem.language or 'python'
-        expected_output = serializer.validated_data.get('expected_output') or problem.expected_output
         custom_input = serializer.validated_data.get('custom_input')
+        custom_expected = serializer.validated_data.get('custom_expected_output')
+
+        if custom_input is not None:
+            if custom_expected is not None:
+                expected_output = custom_expected
+            else:
+                expected_output = serializer.validated_data.get('expected_output', '')
+        else:
+            expected_output = serializer.validated_data.get('expected_output') or problem.expected_output
 
         result = run_problem_test_cases(
             code=code,
@@ -135,17 +143,48 @@ class ProblemSubmitSolutionView(views.APIView):
 
             total_cases = exec_res.get('total_test_cases', 1) or 1
             passed_cases = exec_res.get('passed_test_cases', 0)
+            match_pct = float(exec_res.get('match_percentage', 0.0))
+            max_points = problem.points or 10
 
-            # Proportional score calculation: 100% if all passed, proportional for passing partial
-            if exec_res['is_passed']:
-                score = problem.points
-            elif passed_cases > 0:
-                score = max(1, round((passed_cases / total_cases) * problem.points))
+            # 1. Exact 100% Match: Output matches required answer key across all test cases
+            if exec_res['is_passed'] or (passed_cases == total_cases and total_cases > 0):
+                score = max_points
+                score_pct = 100.0
+                score_breakdown = f"100% Match: Output matches required answer key on all {total_cases} test cases."
+            elif exec_res['status'] in ('COMPILE_ERROR', 'TIMEOUT'):
+                score = 0
+                score_pct = 0.0
+                score_breakdown = f"0%: Code execution failed with {exec_res['status']}."
             else:
-                score = 2 if exec_res['status'] != 'COMPILE_ERROR' and len(code) > 20 else 0
+                # 2. Proportional Score based on output matching & code logic
+                tc_ratio = passed_cases / total_cases if total_cases > 0 else 0.0
+                sim_ratio = min(1.0, max(0.0, match_pct / 100.0))
+
+                # Expected keywords presence inspection in student code
+                keywords = problem.expected_keywords or []
+                if isinstance(keywords, list) and len(keywords) > 0:
+                    matched_kw = sum(1 for kw in keywords if str(kw).lower() in code.lower())
+                    kw_ratio = matched_kw / len(keywords)
+                else:
+                    kw_ratio = 0.5 if len(code.strip()) > 30 else 0.0
+
+                # Weighted proportional fraction:
+                # 60% test case pass rate + 25% output similarity + 15% code logic keywords
+                earned_fraction = max(
+                    tc_ratio,
+                    (tc_ratio * 0.60) + (sim_ratio * 0.25) + (kw_ratio * 0.15)
+                )
+                score_pct = round(min(100.0, max(0.0, earned_fraction * 100.0)), 1)
+                score = max(0, round((score_pct / 100.0) * max_points))
+                score_breakdown = (
+                    f"Proportional Grade ({score_pct}%): {passed_cases}/{total_cases} test cases passed, "
+                    f"{match_pct}% output match, {round(kw_ratio * 100)}% code logic."
+                )
 
             # Formatted test summary
             summary_lines = [
+                f"Automated Grade: {score}/{max_points} Points ({score_pct}%)",
+                f"Assessment: {score_breakdown}",
                 f"Test Verification: {passed_cases}/{total_cases} Passed (Status: {exec_res['status']})"
             ]
             for tc in exec_res.get('test_cases', []):
@@ -187,6 +226,9 @@ class ProblemSubmitSolutionView(views.APIView):
         response_data['passed_test_cases'] = exec_res.get('passed_test_cases', 0)
         response_data['test_cases'] = exec_res.get('test_cases', [])
         response_data['hidden_test_cases_count'] = exec_res.get('hidden_test_cases_count', 0)
+        response_data['score'] = score
+        response_data['score_percentage'] = score_pct
+        response_data['score_breakdown'] = score_breakdown
 
         return Response(
             response_data,

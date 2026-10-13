@@ -4,13 +4,43 @@ from django.utils import timezone
 from .models import (
     Subject, Module, Topic, CodeExample, Problem, TopicImage,
     Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord,
-    PlatformCapability, TopicQuizQuestion, StudentTopicProgress, TopicQuizAttempt
+    PlatformCapability, TopicQuizQuestion, StudentTopicProgress, TopicQuizAttempt,
+    CourseEnrollment, Certificate, TopicDoubt
 )
 
 User = get_user_model()
 
 
-class TopicQuizQuestionSerializer(serializers.ModelSerializer):
+def attach_audit_fields(data, instance):
+    if hasattr(instance, 'is_deleted'):
+        data['is_deleted'] = getattr(instance, 'is_deleted', False)
+        data['isDeleted'] = getattr(instance, 'is_deleted', False)
+    if hasattr(instance, 'created_by'):
+        cb = getattr(instance, 'created_by', None)
+        data['created_by'] = cb.id if cb else None
+        data['createdBy'] = cb.username if cb else None
+    if hasattr(instance, 'created_at'):
+        ca = getattr(instance, 'created_at', None)
+        data['created_at'] = ca.isoformat() if ca else None
+        data['createdAt'] = ca.isoformat() if ca else None
+    if hasattr(instance, 'updated_by'):
+        ub = getattr(instance, 'updated_by', None)
+        data['updated_by'] = ub.id if ub else None
+        data['updatedBy'] = ub.username if ub else None
+    if hasattr(instance, 'updated_at'):
+        ua = getattr(instance, 'updated_at', None)
+        data['updated_at'] = ua.isoformat() if ua else None
+        data['updatedAt'] = ua.isoformat() if ua else None
+    return data
+
+
+class AuditModelSerializer(serializers.ModelSerializer):
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        return attach_audit_fields(data, instance)
+
+
+class TopicQuizQuestionSerializer(AuditModelSerializer):
     """Full question serializer for Staff / Admin with answer key"""
     topic_title = serializers.CharField(source='topic.title', read_only=True)
     module_name = serializers.CharField(source='topic.module.name', read_only=True)
@@ -26,7 +56,7 @@ class TopicQuizQuestionSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
 
-class StudentQuizQuestionSerializer(serializers.ModelSerializer):
+class StudentQuizQuestionSerializer(AuditModelSerializer):
     """Safe question serializer for students during test execution (omits correct_option and explanation)"""
     class Meta:
         model = TopicQuizQuestion
@@ -157,10 +187,10 @@ class ProblemSerializer(serializers.ModelSerializer):
                 else:
                     sanitized.append(tc)
             data['test_criteria'] = sanitized
-        return data
+        return attach_audit_fields(data, instance)
 
 
-class CodeExampleSerializer(serializers.ModelSerializer):
+class CodeExampleSerializer(AuditModelSerializer):
     class Meta:
         model = CodeExample
         fields = ['id', 'topic', 'label', 'code', 'order']
@@ -173,11 +203,12 @@ class TopicImageSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'uploaded_at']
 
 
-class TopicSerializer(serializers.ModelSerializer):
+class TopicSerializer(AuditModelSerializer):
     topic_id = serializers.SlugField(required=False, allow_blank=True, validators=[])
     problems = ProblemSerializer(many=True, read_only=True)
     examples = CodeExampleSerializer(many=True, read_only=True)
     images = TopicImageSerializer(many=True, read_only=True)
+    quiz_questions = TopicQuizQuestionSerializer(many=True, read_only=True)
     module_name = serializers.CharField(source='module.name', read_only=True)
     subject_id = serializers.IntegerField(source='module.subject.id', read_only=True)
     subject_name = serializers.CharField(source='module.subject.name', read_only=True)
@@ -189,7 +220,7 @@ class TopicSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'module', 'module_name', 'subject_id', 'subject_name',
             'topic_id', 'title', 'explain', 'notes_content', 'order',
-            'problems', 'examples', 'images', 'quiz_question_count', 'user_progress'
+            'problems', 'examples', 'images', 'quiz_questions', 'quiz_question_count', 'user_progress'
         ]
 
     def get_quiz_question_count(self, obj):
@@ -258,7 +289,7 @@ class TopicSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
-class ModuleSerializer(serializers.ModelSerializer):
+class ModuleSerializer(AuditModelSerializer):
     topics = TopicSerializer(many=True, read_only=True)
     subject_name = serializers.CharField(source='subject.name', read_only=True)
 
@@ -267,7 +298,7 @@ class ModuleSerializer(serializers.ModelSerializer):
         fields = ['id', 'subject', 'subject_name', 'name', 'level', 'order', 'topics']
 
 
-class SubjectListSerializer(serializers.ModelSerializer):
+class SubjectListSerializer(AuditModelSerializer):
     """
     Ultra-lightweight Subject serializer for course listings and catalog pages.
     Omits deep recursive modules, topics, problems, and examples, dropping payload
@@ -305,7 +336,7 @@ class SubjectListSerializer(serializers.ModelSerializer):
         return obj.modules.count()
 
 
-class SubjectSerializer(serializers.ModelSerializer):
+class SubjectSerializer(AuditModelSerializer):
     slug = serializers.SlugField(required=False, allow_blank=True, validators=[])
     modules = ModuleSerializer(many=True, read_only=True)
     batch_count = serializers.SerializerMethodField()
@@ -401,7 +432,7 @@ class BatchTopicProgressSerializer(serializers.ModelSerializer):
         ]
 
 
-class BatchSerializer(serializers.ModelSerializer):
+class BatchSerializer(AuditModelSerializer):
     course_name = serializers.CharField(source='course.name', read_only=True)
     course_slug = serializers.CharField(source='course.slug', read_only=True)
     staff_details = BatchUserMiniSerializer(source='staff', many=True, read_only=True)
@@ -461,3 +492,75 @@ class StaffDailyLogSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at', 'student_attendance'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'batch_name', 'course_name', 'staff_name', 'topic_title']
+
+
+class CertificateSerializer(AuditModelSerializer):
+    student_name_display = serializers.CharField(source='student.display_name', read_only=True)
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    course_name_display = serializers.CharField(source='subject.name', read_only=True)
+    course_slug = serializers.CharField(source='subject.slug', read_only=True)
+
+    class Meta:
+        model = Certificate
+        fields = [
+            'id', 'certificate_id', 'student', 'student_username', 'student_name',
+            'student_name_display', 'subject', 'course_name', 'course_name_display',
+            'course_slug', 'grade_percentage', 'issued_at', 'is_revoked', 'revoked_reason'
+        ]
+        read_only_fields = ['id', 'certificate_id', 'issued_at']
+
+
+class CourseEnrollmentSerializer(AuditModelSerializer):
+    student_name = serializers.CharField(source='student.display_name', read_only=True)
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    student_email = serializers.CharField(source='student.email', read_only=True)
+    subject_name = serializers.CharField(source='subject.name', read_only=True)
+    subject_slug = serializers.CharField(source='subject.slug', read_only=True)
+    subject_level = serializers.CharField(source='subject.level', read_only=True)
+    batch_name = serializers.CharField(source='batch.name', read_only=True)
+    certificate = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CourseEnrollment
+        fields = [
+            'id', 'student', 'student_name', 'student_username', 'student_email',
+            'subject', 'subject_name', 'subject_slug', 'subject_level',
+            'batch', 'batch_name', 'enrolled_at', 'status',
+            'progress_percentage', 'completed_at', 'certificate'
+        ]
+        read_only_fields = ['id', 'enrolled_at']
+
+    def get_certificate(self, obj):
+        cert = obj.student.certificates.filter(subject=obj.subject, is_revoked=False).first()
+        if not cert:
+            return None
+        return {
+            'id': cert.id,
+            'certificate_id': cert.certificate_id,
+            'student_name': cert.student_name,
+            'course_name': cert.course_name,
+            'issued_at': cert.issued_at.isoformat() if cert.issued_at else None,
+            'grade_percentage': cert.grade_percentage
+        }
+
+
+class TopicDoubtSerializer(AuditModelSerializer):
+    student_name = serializers.CharField(source='student.display_name', read_only=True)
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    student_avatar = serializers.CharField(source='student.avatar_url', read_only=True)
+    topic_title = serializers.CharField(source='topic.title', read_only=True)
+    topic_slug = serializers.CharField(source='topic.topic_id', read_only=True)
+    subject_name = serializers.CharField(source='topic.module.subject.name', read_only=True)
+    replied_by_name = serializers.CharField(source='replied_by.display_name', read_only=True)
+
+    class Meta:
+        model = TopicDoubt
+        fields = [
+            'id', 'topic', 'topic_title', 'topic_slug', 'subject_name',
+            'student', 'student_name', 'student_username', 'student_avatar',
+            'question', 'clarification_reply',
+            'replied_by', 'replied_by_name', 'replied_at',
+            'status', 'created_at'
+        ]
+        read_only_fields = ['id', 'student', 'replied_by', 'replied_at', 'status', 'created_at']
+
