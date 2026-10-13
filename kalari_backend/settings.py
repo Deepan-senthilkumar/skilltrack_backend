@@ -70,25 +70,27 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'kalari_backend.wsgi.application'
 
-# Database Configuration (Default to live Supabase PostgreSQL Cloud DB)
+# Database Configuration (Supabase PostgreSQL Cloud DB or local SQLite)
 DEFAULT_SUPABASE_DB = 'postgresql://postgres.ystzefjfudtqgrzlcgmb:%26Deep%40n3434%24@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require'
-DATABASE_URL = os.environ.get('DATABASE_URL') or DEFAULT_SUPABASE_DB
+USE_SQLITE = os.environ.get('USE_SQLITE', 'False').lower() in ('true', '1', 'yes')
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
-if DATABASE_URL:
-    DATABASES = {
-        'default': dj_database_url.config(
-            default=DATABASE_URL,
-            conn_max_age=600,
-            conn_health_checks=True,
-            ssl_require=True
-        )
-    }
-else:
+if USE_SQLITE or DATABASE_URL.startswith('sqlite') or DATABASE_URL.strip().lower() == 'sqlite':
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
             'NAME': BASE_DIR / 'db.sqlite3',
         }
+    }
+else:
+    active_db_url = DATABASE_URL or DEFAULT_SUPABASE_DB
+    DATABASES = {
+        'default': dj_database_url.config(
+            default=active_db_url,
+            conn_max_age=600,
+            conn_health_checks=True,
+            ssl_require='postgres' in active_db_url
+        )
     }
 
 AUTH_USER_MODEL = 'users.User'

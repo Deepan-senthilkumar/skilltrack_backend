@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta
 import random
 from django.utils import timezone
@@ -5,7 +6,7 @@ from django.db.models import Count, Sum, Avg, Q
 from django.http import HttpResponse
 from rest_framework import views, generics, status, permissions
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from apps.assignments.permissions import IsInstructor
@@ -13,7 +14,8 @@ from django.core.cache import cache
 from .models import (
     Subject, Module, Topic, CodeExample, Problem, TopicImage, UploadedMedia,
     Batch, BatchTopicProgress, StaffDailyLog, StudentAttendanceRecord,
-    PlatformCapability, TopicQuizQuestion, StudentTopicProgress, TopicQuizAttempt
+    PlatformCapability, TopicQuizQuestion, StudentTopicProgress, TopicQuizAttempt,
+    CourseEnrollment, Certificate, TopicDoubt
 )
 from .serializers import (
     SubjectSerializer, SubjectListSerializer, ModuleSerializer, TopicSerializer, CodeExampleSerializer, ProblemSerializer,
@@ -21,7 +23,8 @@ from .serializers import (
     StudentAttendanceRecordSerializer, TopicImageSerializer,
     PlatformCapabilitySerializer,
     TopicQuizQuestionSerializer, StudentQuizQuestionSerializer,
-    StudentTopicProgressSerializer, TopicQuizAttemptSerializer
+    StudentTopicProgressSerializer, TopicQuizAttemptSerializer,
+    CourseEnrollmentSerializer, CertificateSerializer, TopicDoubtSerializer
 )
 
 
@@ -73,7 +76,8 @@ class SubjectDetailView(generics.RetrieveAPIView):
         ).prefetch_related(
             'examples',
             'images',
-            'problems__access_control'
+            'problems__access_control',
+            'quiz_questions'
         ).order_by('order', 'id')
 
         return Subject.objects.annotate(
@@ -1080,4 +1084,382 @@ class StaffResetQuizCooldownView(views.APIView):
             'success': True,
             'message': f'Successfully cleared cooldown for student on topic: {topic.title}'
         })
+
+
+# =========================================================================
+# Course Enrollment & Certificate Management Views
+# =========================================================================
+
+class MyEnrollmentsListView(generics.ListAPIView):
+    """
+    Student View: Returns all courses the current student has enrolled in.
+    Also recalibrates live progress percentage and auto-issues certificates upon 100% completion.
+    """
+    serializer_class = CourseEnrollmentSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        
+        # Auto-sync enrollments for existing students who were previously added to batches or have progress
+        if hasattr(user, 'enrolled_batches'):
+            for b in user.enrolled_batches.filter(is_deleted=False).select_related('course'):
+                if b.course:
+                    CourseEnrollment.objects.get_or_create(
+                        student=user,
+                        subject=b.course,
+                        defaults={'batch': b, 'status': 'ACTIVE'}
+                    )
+        
+        existing_subject_ids = StudentTopicProgress.objects.filter(student=user).values_list('topic__module__subject_id', flat=True).distinct()
+        for sid in existing_subject_ids:
+            if sid:
+                CourseEnrollment.objects.get_or_create(
+                    student=user,
+                    subject_id=sid,
+                    defaults={'status': 'ACTIVE'}
+                )
+
+        enrollments = CourseEnrollment.objects.filter(student=user, is_deleted=False).select_related('subject', 'batch')
+        
+        # Calculate real-time progress for each enrollment
+        for en in enrollments:
+            topics = Topic.objects.filter(module__subject=en.subject, is_deleted=False)
+            total_topics = topics.count()
+            if total_topics > 0:
+                completed_topics = 0
+                for t in topics:
+                    # Check practical pass
+                    has_problems = t.problems.filter(is_deleted=False).exists()
+                    prac_passed = True
+                    if has_problems:
+                        from apps.assignments.models import Submission
+                        passed_subs = Submission.objects.filter(
+                            student=user, problem__topic=t, is_passed=True
+                        ).values_list('problem_id', flat=True).distinct()
+                        total_problems = t.problems.filter(is_deleted=False).count()
+                        prac_passed = len(passed_subs) >= total_problems
+                    
+                    # Check quiz pass
+                    prog = StudentTopicProgress.objects.filter(student=user, topic=t).first()
+                    quiz_passed = prog.is_completed if prog else False
+                    
+                    if prac_passed and quiz_passed:
+                        completed_topics += 1
+                
+                pct = round((completed_topics / total_topics) * 100, 1)
+                en.progress_percentage = pct
+                if pct >= 100.0:
+                    en.status = 'COMPLETED'
+                    if not en.completed_at:
+                        en.completed_at = timezone.now()
+                    
+                    # Auto-generate certificate if not exists
+                    cert = Certificate.objects.filter(student=user, subject=en.subject, is_revoked=False).first()
+                    if not cert:
+                        student_name = getattr(user, 'display_name', None) or f"{user.first_name} {user.last_name}".strip() or user.username
+                        cert_code = f"CERT-SKILLSTACK-{en.subject.slug.upper()}-{uuid.uuid4().hex[:8].upper()}"
+                        Certificate.objects.create(
+                            certificate_id=cert_code,
+                            student=user,
+                            subject=en.subject,
+                            enrollment=en,
+                            student_name=student_name,
+                            course_name=en.subject.name,
+                            grade_percentage=100.0,
+                            issued_at=timezone.now(),
+                            created_by=user
+                        )
+                en.save(update_fields=['progress_percentage', 'status', 'completed_at', 'updated_at'])
+        
+        return enrollments
+
+
+class EnrollCourseView(views.APIView):
+    """
+    Student View: Enroll into a course track.
+    Auto-assigns student to active Cohort Batch for practical task submissions.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        data = request.data if isinstance(request.data, dict) else {}
+        
+        subject_id = None
+        subject_slug = None
+        if isinstance(request.data, (int, str)):
+            raw_val = str(request.data).strip()
+            if raw_val.isdigit():
+                subject_id = int(raw_val)
+            else:
+                subject_slug = raw_val
+        elif isinstance(data, dict):
+            subject_slug = data.get('subject_slug') or data.get('slug')
+            subject_id = data.get('subject_id') or data.get('id') or data.get('subject')
+
+        subject = None
+        if subject_id:
+            try:
+                subject = Subject.objects.filter(id=int(subject_id), is_deleted=False).first()
+            except (ValueError, TypeError):
+                pass
+        if not subject and subject_slug:
+            subject = Subject.objects.filter(slug=subject_slug, is_deleted=False).first()
+        if not subject:
+            subject = Subject.objects.filter(slug='c-programming', is_deleted=False).first() or Subject.objects.filter(is_deleted=False).first()
+
+        if not subject:
+            return Response({'error': 'Course / Subject not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        enrollment, created = CourseEnrollment.objects.get_or_create(
+            student=user,
+            subject=subject,
+            defaults={
+                'created_by': user,
+                'status': 'ACTIVE',
+                'enrolled_at': timezone.now()
+            }
+        )
+
+        if not created and enrollment.status != 'ACTIVE':
+            enrollment.status = 'ACTIVE'
+            enrollment.save(update_fields=['status'])
+
+        # Connect with active batch if available or auto-create default cohort batch
+        active_batch = Batch.objects.filter(course=subject, status='ACTIVE', is_deleted=False).first() or Batch.objects.filter(course=subject, is_deleted=False).first()
+        if not active_batch:
+            active_batch = Batch.objects.create(
+                name=f"{subject.name} - Cohort {timezone.now().year}",
+                course=subject,
+                status='ACTIVE',
+                created_by=user if user.is_staff else None
+            )
+        
+        active_batch.students.add(user)
+        if not enrollment.batch:
+            enrollment.batch = active_batch
+            enrollment.save(update_fields=['batch'])
+
+        return Response({
+            'success': True,
+            'created': created,
+            'message': f"Successfully enrolled in {subject.name}!",
+            'enrollment': CourseEnrollmentSerializer(enrollment).data
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+class MyCertificatesListView(generics.ListAPIView):
+    """Student View: Returns all verified certificates earned by the student"""
+    serializer_class = CertificateSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Certificate.objects.filter(student=self.request.user, is_revoked=False, is_deleted=False).select_related('student', 'subject')
+
+
+class CertificateDetailView(views.APIView):
+    """Public / Verification View: Retrieve certificate by public credential ID"""
+    permission_classes = [AllowAny]
+
+    def get(self, request, certificate_id):
+        cert = Certificate.objects.filter(certificate_id=certificate_id, is_deleted=False).select_related('student', 'subject').first()
+        if not cert:
+            return Response({'error': 'Certificate not found or invalid certificate code.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        return Response({
+            'valid': not cert.is_revoked,
+            'certificate': CertificateSerializer(cert).data
+        })
+
+
+class GenerateCertificateView(views.APIView):
+    """Generate or retrieve certificate for a completed subject"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        subject_id = request.data.get('subject_id')
+        subject_slug = request.data.get('subject_slug')
+
+        subject = None
+        if subject_slug:
+            subject = Subject.objects.filter(slug=subject_slug).first()
+        elif subject_id:
+            subject = Subject.objects.filter(id=subject_id).first()
+
+        if not subject:
+            return Response({'error': 'Subject not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check existing certificate
+        existing = Certificate.objects.filter(student=user, subject=subject, is_revoked=False).first()
+        if existing:
+            return Response({
+                'success': True,
+                'certificate': CertificateSerializer(existing).data
+            })
+
+        enrollment = CourseEnrollment.objects.filter(student=user, subject=subject).first()
+        student_name = getattr(user, 'display_name', None) or f"{user.first_name} {user.last_name}".strip() or user.username
+        cert_code = f"CERT-SKILLSTACK-{subject.slug.upper()}-{uuid.uuid4().hex[:8].upper()}"
+
+        cert = Certificate.objects.create(
+            certificate_id=cert_code,
+            student=user,
+            subject=subject,
+            enrollment=enrollment,
+            student_name=student_name,
+            course_name=subject.name,
+            grade_percentage=100.0,
+            issued_at=timezone.now(),
+            created_by=user
+        )
+
+        if enrollment:
+            enrollment.status = 'COMPLETED'
+            enrollment.progress_percentage = 100.0
+            enrollment.completed_at = timezone.now()
+            enrollment.save(update_fields=['status', 'progress_percentage', 'completed_at'])
+
+        return Response({
+            'success': True,
+            'message': 'Official certificate issued successfully!',
+            'certificate': CertificateSerializer(cert).data
+        }, status=status.HTTP_201_CREATED)
+
+
+# Staff / Admin Management Views
+class StaffEnrollmentListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsInstructor]
+    serializer_class = CourseEnrollmentSerializer
+    queryset = CourseEnrollment.objects.filter(is_deleted=False).select_related('student', 'subject', 'batch').order_by('-enrolled_at')
+
+
+class StaffEnrollmentDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsInstructor]
+    serializer_class = CourseEnrollmentSerializer
+    queryset = CourseEnrollment.objects.all()
+
+    def perform_destroy(self, instance):
+        instance.is_deleted = True
+        instance.save()
+
+
+class StaffCertificateListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsInstructor]
+    serializer_class = CertificateSerializer
+    queryset = Certificate.objects.filter(is_deleted=False).select_related('student', 'subject').order_by('-issued_at')
+
+
+class StaffCertificateDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsInstructor]
+    serializer_class = CertificateSerializer
+    queryset = Certificate.objects.all()
+
+    def perform_destroy(self, instance):
+        instance.is_revoked = True
+        instance.is_deleted = True
+        instance.save()
+
+
+# =========================================================================
+# TOPIC DOUBTS & INSTRUCTOR CLARIFICATION SYSTEM
+# =========================================================================
+
+class TopicDoubtStudentListCreateView(views.APIView):
+    """
+    Student View: View own doubts and submit new questions on a topic.
+    Guarantees privacy: each student only receives clarification messages intended for them.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_topic(self, topic_id):
+        if str(topic_id).isdigit():
+            return Topic.objects.filter(id=int(topic_id)).first()
+        return Topic.objects.filter(topic_id=str(topic_id)).first()
+
+    def get(self, request, topic_id):
+        topic = self._get_topic(topic_id)
+        if not topic:
+            return Response({'error': 'Topic not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        doubts = TopicDoubt.objects.filter(
+            topic=topic,
+            student=request.user,
+            is_deleted=False
+        ).select_related('student', 'replied_by').order_by('-created_at')
+
+        serializer = TopicDoubtSerializer(doubts, many=True)
+        return Response(serializer.data)
+
+    def post(self, request, topic_id):
+        topic = self._get_topic(topic_id)
+        if not topic:
+            return Response({'error': 'Topic not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        question = request.data.get('question', '').strip()
+        if not question:
+            return Response({'error': 'Please enter your doubt / question'}, status=status.HTTP_400_BAD_REQUEST)
+
+        doubt = TopicDoubt.objects.create(
+            topic=topic,
+            student=request.user,
+            question=question,
+            status='PENDING',
+            created_by=request.user
+        )
+
+        return Response(TopicDoubtSerializer(doubt).data, status=status.HTTP_201_CREATED)
+
+
+class StaffTopicDoubtListView(generics.ListAPIView):
+    """
+    Instructor / Admin View: List all student doubts across topics for review and reply.
+    """
+    permission_classes = [IsInstructor]
+    serializer_class = TopicDoubtSerializer
+
+    def get_queryset(self):
+        qs = TopicDoubt.objects.filter(is_deleted=False).select_related(
+            'student', 'topic', 'topic__module__subject', 'replied_by'
+        )
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter.upper())
+        topic_id = self.request.query_params.get('topic_id')
+        if topic_id:
+            if topic_id.isdigit():
+                qs = qs.filter(topic_id=int(topic_id))
+            else:
+                qs = qs.filter(topic__topic_id=topic_id)
+        return qs.order_by('-created_at')
+
+
+class StaffTopicDoubtReplyView(views.APIView):
+    """
+    Instructor / Admin View: Post a direct, private clarification message for a student's doubt.
+    """
+    permission_classes = [IsInstructor]
+
+    def post(self, request, pk):
+        doubt = TopicDoubt.objects.filter(id=pk, is_deleted=False).first()
+        if not doubt:
+            return Response({'error': 'Doubt record not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        clarification = request.data.get('clarification_reply', '').strip()
+        if not clarification:
+            return Response({'error': 'Please provide clarification content'}, status=status.HTTP_400_BAD_REQUEST)
+
+        doubt.clarification_reply = clarification
+        doubt.replied_by = request.user
+        doubt.replied_at = timezone.now()
+        doubt.status = 'RESOLVED'
+        doubt.save()
+
+        return Response({
+            'success': True,
+            'message': f'Clarification sent directly to {doubt.student.username}.',
+            'doubt': TopicDoubtSerializer(doubt).data
+        })
+
 

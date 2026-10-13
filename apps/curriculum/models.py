@@ -7,7 +7,32 @@ SUPABASE_URL = "https://ystzefjfudtqgrzlcgmb.supabase.co"
 SUPABASE_STORAGE_BUCKET = "topic-images"
 
 
-class Subject(models.Model):
+class AuditModel(models.Model):
+    is_deleted = models.BooleanField(default=False, db_index=True, help_text="Soft delete flag")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="%(app_label)s_%(class)s_created",
+        help_text="User who created this record"
+    )
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="%(app_label)s_%(class)s_updated",
+        help_text="User who last updated this record"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
+
+
+class Subject(AuditModel):
     objects = models.Manager()
     name = models.CharField(max_length=200, help_text="Course name e.g. C Programming, Python, Django")
     slug = models.SlugField(max_length=100, unique=True)
@@ -25,7 +50,6 @@ class Subject(models.Model):
     instructor_name = models.CharField(max_length=150, default="Lead Trainer")
     order = models.PositiveIntegerField(default=1)
     is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['order', 'id']
@@ -48,7 +72,7 @@ class Subject(models.Model):
         return self.name
 
 
-class Module(models.Model):
+class Module(AuditModel):
     objects = models.Manager()
     LEVEL_CHOICES = (
         ('beginner', 'Beginner'),
@@ -69,7 +93,7 @@ class Module(models.Model):
         return f"{prefix}[{self.level.upper()}] {self.name}"
 
 
-class Topic(models.Model):
+class Topic(AuditModel):
     objects = models.Manager()
     module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name='topics')
     topic_id = models.SlugField(max_length=100, unique=True, blank=True)
@@ -97,7 +121,7 @@ class Topic(models.Model):
         return f"{self.module.subject.name if self.module and self.module.subject else ''} -> {self.title}"
 
 
-class CodeExample(models.Model):
+class CodeExample(AuditModel):
     objects = models.Manager()
     topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name='examples')
     label = models.CharField(max_length=150)
@@ -111,7 +135,7 @@ class CodeExample(models.Model):
         return f"{self.topic.title} - {self.label}"
 
 
-class Problem(models.Model):
+class Problem(AuditModel):
     objects = models.Manager()
     LANGUAGE_CHOICES = (
         ('python', 'Python 3'),
@@ -119,6 +143,7 @@ class Problem(models.Model):
         ('javascript', 'JavaScript (Node.js)'),
         ('cpp', 'C++'),
         ('java', 'Java'),
+        ('dart', 'Dart Programming'),
         ('excel', 'MS Excel / Spreadsheet Task'),
         ('word', 'MS Word & Documentation Task'),
         ('tally', 'Tally Prime / Accounting Entry'),
@@ -187,7 +212,7 @@ class UploadedMedia(models.Model):
         return f"{self.filename} ({self.content_type})"
 
 
-class Batch(models.Model):
+class Batch(AuditModel):
     objects = models.Manager()
     STATUS_CHOICES = (
         ('UPCOMING', 'Upcoming'),
@@ -220,7 +245,6 @@ class Batch(models.Model):
     end_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
     max_students = models.PositiveIntegerField(default=30)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-created_at']
@@ -332,7 +356,7 @@ class PlatformCapability(models.Model):
         return f"{self.number} — {self.title}"
 
 
-class TopicQuizQuestion(models.Model):
+class TopicQuizQuestion(AuditModel):
     """MCQ Question in the Topic Question Bank (e.g. 20+ questions per topic)"""
     OPTION_CHOICES = (
         ('A', 'Option A'),
@@ -351,7 +375,6 @@ class TopicQuizQuestion(models.Model):
     correct_option = models.CharField(max_length=2, choices=OPTION_CHOICES, default='A', help_text="Correct answer letter (A, B, C, or D)")
     explanation = models.TextField(blank=True, default="", help_text="Detailed explanation shown during review")
     order = models.PositiveIntegerField(default=1)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['topic', 'order', 'id']
@@ -434,4 +457,91 @@ class TopicQuizAttempt(models.Model):
 
     def __str__(self) -> str:
         return f"{self.student.username} -> {self.topic.title}: {self.score}/{self.total_questions} ({self.percentage}%) [{self.status}]"
+
+
+class CourseEnrollment(AuditModel):
+    STATUS_CHOICES = (
+        ('ACTIVE', 'Active Learning'),
+        ('COMPLETED', 'Completed'),
+        ('DROPPED', 'Dropped'),
+    )
+
+    objects = models.Manager()
+    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='course_enrollments')
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='enrollments')
+    batch = models.ForeignKey('Batch', on_delete=models.SET_NULL, null=True, blank=True, related_name='enrollments')
+    enrolled_at = models.DateTimeField(default=timezone.now)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
+    progress_percentage = models.FloatField(default=0.0)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ('student', 'subject')
+        ordering = ['-enrolled_at']
+        verbose_name = "Course Enrollment"
+        verbose_name_plural = "Course Enrollments"
+
+    def __str__(self) -> str:
+        return f"{self.student.username} -> {self.subject.name} [{self.status}] ({self.progress_percentage}%)"
+
+
+class Certificate(AuditModel):
+    objects = models.Manager()
+    certificate_id = models.CharField(max_length=64, unique=True, help_text="Public verification code")
+    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='certificates')
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='certificates')
+    enrollment = models.ForeignKey(CourseEnrollment, on_delete=models.SET_NULL, null=True, blank=True, related_name='certificates')
+    student_name = models.CharField(max_length=255, help_text="Registered student full display name")
+    course_name = models.CharField(max_length=255, help_text="Full course title")
+    grade_percentage = models.FloatField(default=100.0)
+    issued_at = models.DateTimeField(default=timezone.now)
+    is_revoked = models.BooleanField(default=False)
+    revoked_reason = models.CharField(max_length=255, blank=True, default="")
+
+    class Meta:
+        unique_together = ('student', 'subject')
+        ordering = ['-issued_at']
+        verbose_name = "Certificate"
+        verbose_name_plural = "Certificates"
+
+    def save(self, *args, **kwargs):
+        if not self.certificate_id:
+            import uuid
+            code = uuid.uuid4().hex[:8].upper()
+            slug_part = (self.subject.slug if self.subject else 'COURSE').upper()
+            self.certificate_id = f"CERT-SKILLSTACK-{slug_part}-{code}"
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.certificate_id} - {self.student_name} ({self.course_name})"
+
+
+class TopicDoubt(AuditModel):
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending Clarification'),
+        ('RESOLVED', 'Clarified / Resolved'),
+    )
+
+    objects = models.Manager()
+    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='topic_doubts')
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name='doubts')
+    question = models.TextField(help_text="Student's doubt / question regarding this topic")
+    clarification_reply = models.TextField(blank=True, default="", help_text="Instructor private clarification response")
+    replied_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='clarified_doubts'
+    )
+    replied_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Topic Doubt & Clarification"
+        verbose_name_plural = "Topic Doubts & Clarifications"
+
+    def __str__(self) -> str:
+        return f"{self.student.username} -> {self.topic.title}: {self.question[:40]} [{self.status}]"
 

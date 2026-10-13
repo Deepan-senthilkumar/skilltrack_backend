@@ -326,6 +326,158 @@ def execute_c_code(code: str, stdin_input: str = "", timeout_sec: float = 5.0) -
             }
 
 
+def find_java_compiler() -> Optional[str]:
+    c = shutil.which("javac")
+    if c:
+        return c
+    p = r"C:\Program Files\Common Files\Oracle\Java\javapath\javac.exe"
+    return p if os.path.exists(p) else None
+
+
+def find_java_runtime() -> Optional[str]:
+    c = shutil.which("java")
+    if c:
+        return c
+    p = r"C:\Program Files\Common Files\Oracle\Java\javapath\java.exe"
+    return p if os.path.exists(p) else None
+
+
+def execute_java_code(code: str, stdin_input: str = "", timeout_sec: float = 6.0) -> Dict[str, Any]:
+    javac = find_java_compiler()
+    java = find_java_runtime()
+    if not javac or not java:
+        return {
+            "status": "RUNTIME_ERROR",
+            "actual_output": "",
+            "error_detail": "Java compiler/runtime (javac/java) not found on system PATH.",
+            "execution_time_ms": 0.0
+        }
+
+    class_match = re.search(r'public\s+class\s+([A-Za-z0-9_]+)', code)
+    class_name = class_match.group(1) if class_match else "Main"
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        src_path = os.path.join(temp_dir, f"{class_name}.java")
+        with open(src_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        compile_proc = subprocess.run(
+            [javac, src_path],
+            capture_output=True,
+            text=True,
+            cwd=temp_dir
+        )
+        if compile_proc.returncode != 0:
+            return {
+                "status": "COMPILE_ERROR",
+                "actual_output": "",
+                "error_detail": compile_proc.stderr or "Java compilation error",
+                "execution_time_ms": 0.0
+            }
+
+        clean_stdin = (stdin_input or "").rstrip() + "\n\n"
+        start_time = time.perf_counter()
+        try:
+            run_proc = subprocess.run(
+                [java, "-cp", temp_dir, class_name],
+                input=clean_stdin,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+                cwd=temp_dir
+            )
+            elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            stdout = run_proc.stdout or ""
+            stderr = run_proc.stderr or ""
+            status = "RUNTIME_ERROR" if run_proc.returncode != 0 else "SUCCESS"
+            return {
+                "status": status,
+                "actual_output": stdout,
+                "error_detail": stderr if run_proc.returncode != 0 else "",
+                "execution_time_ms": elapsed_ms
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "TIMEOUT",
+                "actual_output": "",
+                "error_detail": f"Execution timed out after {timeout_sec}s",
+                "execution_time_ms": timeout_sec * 1000
+            }
+        except Exception as e:
+            return {
+                "status": "RUNTIME_ERROR",
+                "actual_output": "",
+                "error_detail": str(e),
+                "execution_time_ms": 0.0
+            }
+
+
+def find_dart_runtime() -> Optional[str]:
+    c = shutil.which("dart") or shutil.which("dart.bat")
+    if c:
+        return c
+    common = [
+        r"C:\flutter\bin\dart.bat",
+        r"C:\flutter\bin\dart.exe",
+    ]
+    for p in common:
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def execute_dart_code(code: str, stdin_input: str = "", timeout_sec: float = 6.0) -> Dict[str, Any]:
+    dart = find_dart_runtime()
+    if not dart:
+        return {
+            "status": "RUNTIME_ERROR",
+            "actual_output": "",
+            "error_detail": "Dart SDK runtime (dart) not found on system PATH.",
+            "execution_time_ms": 0.0
+        }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        src_path = os.path.join(temp_dir, "main.dart")
+        with open(src_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        clean_stdin = (stdin_input or "").rstrip() + "\n\n"
+        start_time = time.perf_counter()
+        try:
+            run_proc = subprocess.run(
+                [dart, "run", "main.dart"],
+                input=clean_stdin,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+                cwd=temp_dir
+            )
+            elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            stdout = run_proc.stdout or ""
+            stderr = run_proc.stderr or ""
+            status = "RUNTIME_ERROR" if run_proc.returncode != 0 else "SUCCESS"
+            return {
+                "status": status,
+                "actual_output": stdout,
+                "error_detail": stderr if run_proc.returncode != 0 else "",
+                "execution_time_ms": elapsed_ms
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "TIMEOUT",
+                "actual_output": "",
+                "error_detail": f"Execution timed out after {timeout_sec}s",
+                "execution_time_ms": timeout_sec * 1000
+            }
+        except Exception as e:
+            return {
+                "status": "RUNTIME_ERROR",
+                "actual_output": "",
+                "error_detail": str(e),
+                "execution_time_ms": 0.0
+            }
+
+
 def execute_code_by_language(code: str, language: str, stdin_input: str = "", timeout_sec: float = 5.0) -> Dict[str, Any]:
     lang = (language or "python").lower().strip()
     if lang in ["python", "py"]:
@@ -334,6 +486,10 @@ def execute_code_by_language(code: str, language: str, stdin_input: str = "", ti
         return execute_javascript_code(code, stdin_input=stdin_input, timeout_sec=timeout_sec)
     elif lang in ["c", "c++", "cpp"]:
         return execute_c_code(code, stdin_input=stdin_input, timeout_sec=timeout_sec)
+    elif lang in ["java"]:
+        return execute_java_code(code, stdin_input=stdin_input, timeout_sec=timeout_sec)
+    elif lang in ["dart"]:
+        return execute_dart_code(code, stdin_input=stdin_input, timeout_sec=timeout_sec)
     return execute_python_code(code, stdin_input=stdin_input, timeout_sec=timeout_sec)
 
 
@@ -534,31 +690,43 @@ def run_problem_test_cases(
     # If custom input is specified in workbench test run
     if custom_input is not None and not is_submission:
         exec_res = execute_code_by_language(code, language, stdin_input=custom_input, timeout_sec=timeout_sec)
-        match_info = check_single_output_match(exec_res.get("actual_output", ""), expected_output, custom_input)
+        actual_out = exec_res.get("actual_output", "")
+        has_expected = bool(expected_output and expected_output.strip())
+
+        if has_expected:
+            match_info = check_single_output_match(actual_out, expected_output, custom_input)
+            is_passed = match_info["is_passed"] and exec_res.get("status") == "SUCCESS"
+            status_val = exec_res.get("status", "SUCCESS") if exec_res.get("status") != "SUCCESS" else ("PASSED" if is_passed else "FAILED")
+            match_pct = match_info["match_percentage"]
+        else:
+            is_passed = exec_res.get("status") == "SUCCESS"
+            status_val = exec_res.get("status", "SUCCESS")
+            match_pct = 100.0 if is_passed else 0.0
+
         return {
-            "is_passed": match_info["is_passed"] and exec_res.get("status") == "SUCCESS",
-            "status": exec_res.get("status", "SUCCESS") if exec_res.get("status") != "SUCCESS" else ("PASSED" if match_info["is_passed"] else "FAILED"),
-            "match_percentage": match_info["match_percentage"],
-            "actual_output": exec_res.get("actual_output", ""),
-            "expected_output": expected_output,
+            "is_passed": is_passed,
+            "status": status_val,
+            "match_percentage": match_pct,
+            "actual_output": actual_out,
+            "expected_output": expected_output if has_expected else "(No target output configured)",
             "error_detail": exec_res.get("error_detail", ""),
             "execution_time_ms": exec_res.get("execution_time_ms", 0.0),
             "test_cases": [
                 {
                     "id": "custom",
-                    "name": "Custom Input Test",
+                    "name": "Custom Test Case",
                     "input": custom_input,
-                    "expected_output": expected_output or "(Custom Run)",
-                    "actual_output": exec_res.get("actual_output", ""),
-                    "is_passed": match_info["is_passed"] and exec_res.get("status") == "SUCCESS",
-                    "match_percentage": match_info["match_percentage"],
-                    "status": exec_res.get("status", "SUCCESS"),
+                    "expected_output": expected_output if has_expected else "(No target output configured)",
+                    "actual_output": actual_out,
+                    "is_passed": is_passed,
+                    "match_percentage": match_pct,
+                    "status": status_val,
                     "is_hidden": False,
                     "execution_time_ms": exec_res.get("execution_time_ms", 0.0)
                 }
             ],
             "total_test_cases": 1,
-            "passed_test_cases": 1 if (match_info["is_passed"] and exec_res.get("status") == "SUCCESS") else 0,
+            "passed_test_cases": 1 if is_passed else 0,
             "hidden_test_cases_count": len([tc for tc in test_cases if tc.get("is_hidden")])
         }
 

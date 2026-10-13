@@ -1,10 +1,10 @@
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
-from apps.curriculum.models import Problem, Batch
+from apps.curriculum.models import Problem, Batch, AuditModel
 
 
-class ProblemAccess(models.Model):
+class ProblemAccess(AuditModel):
     objects = models.Manager()
     problem = models.OneToOneField(Problem, on_delete=models.CASCADE, related_name='access_control')
     is_unlocked = models.BooleanField(default=False, help_text="Toggles whether problem is visible to students")
@@ -31,7 +31,7 @@ class ProblemAccess(models.Model):
         return f"{self.problem.title} [{status}]"
 
 
-class Submission(models.Model):
+class Submission(AuditModel):
     objects = models.Manager()
     STATUS_CHOICES = (
         ('PASSED', 'Passed / Correct'),

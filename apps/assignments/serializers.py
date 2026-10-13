@@ -14,6 +14,11 @@ class ProblemAccessControlSerializer(serializers.ModelSerializer):
         model = ProblemAccess
         fields = ['id', 'problem', 'problem_title', 'is_unlocked', 'unlocked_at', 'deadline', 'allow_late_submission', 'is_active_now']
 
+    def to_representation(self, instance):
+        from apps.curriculum.serializers import attach_audit_fields
+        data = super().to_representation(instance)
+        return attach_audit_fields(data, instance)
+
 
 class ProblemAccessUpdateSerializer(serializers.Serializer):
     is_unlocked = serializers.BooleanField(required=True)
@@ -40,6 +45,7 @@ class TestRunSerializer(serializers.Serializer):
     language = serializers.CharField(required=False, default='python')
     expected_output = serializers.CharField(required=False, allow_blank=True, default='')
     custom_input = serializers.CharField(required=False, allow_blank=True, allow_null=True, default=None)
+    custom_expected_output = serializers.CharField(required=False, allow_blank=True, allow_null=True, default=None)
 
 
 class SubmissionDetailSerializer(serializers.ModelSerializer):
@@ -64,6 +70,11 @@ class SubmissionDetailSerializer(serializers.ModelSerializer):
             'reviewed_at', 'reviewed_by', 'reviewed_by_name'
         ]
         read_only_fields = ['id', 'submitted_at', 'reviewed_at', 'reviewed_by_name']
+
+    def to_representation(self, instance):
+        from apps.curriculum.serializers import attach_audit_fields
+        data = super().to_representation(instance)
+        return attach_audit_fields(data, instance)
 
 
 class ReviewSubmissionSerializer(serializers.Serializer):

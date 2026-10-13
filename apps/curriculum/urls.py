@@ -13,10 +13,29 @@ from .views import (
     PlatformCapabilityListView,
     StaffTopicQuizQuestionListCreateView, StaffTopicQuizQuestionDetailView,
     StaffBulkUploadQuizQuestionsView, TopicQuizStartView, TopicQuizSubmitView,
-    StudentTopicProgressListView, StaffQuizAttemptAnalyticsView, StaffResetQuizCooldownView
+    StudentTopicProgressListView, StaffQuizAttemptAnalyticsView, StaffResetQuizCooldownView,
+    MyEnrollmentsListView, EnrollCourseView, MyCertificatesListView, CertificateDetailView,
+    GenerateCertificateView, StaffEnrollmentListCreateView, StaffEnrollmentDetailView,
+    StaffCertificateListCreateView, StaffCertificateDetailView,
+    TopicDoubtStudentListCreateView, StaffTopicDoubtListView, StaffTopicDoubtReplyView
 )
 
 urlpatterns = [
+    # Topic Doubts & Instructor Clarification (1-on-1 private messaging)
+    path('curriculum/topics/<slug:topic_id>/doubts/', TopicDoubtStudentListCreateView.as_view(), name='topic-doubts-student'),
+    path('staff/doubts/', StaffTopicDoubtListView.as_view(), name='staff-doubts-list'),
+    path('staff/doubts/<int:pk>/reply/', StaffTopicDoubtReplyView.as_view(), name='staff-doubt-reply'),
+    # Course Enrollment & Certificates
+    path('my-enrollments/', MyEnrollmentsListView.as_view(), name='my-enrollments'),
+    path('enroll/', EnrollCourseView.as_view(), name='enroll-course'),
+    path('my-certificates/', MyCertificatesListView.as_view(), name='my-certificates'),
+    path('certificates/<str:certificate_id>/', CertificateDetailView.as_view(), name='certificate-detail'),
+    path('generate-certificate/', GenerateCertificateView.as_view(), name='generate-certificate'),
+    path('staff/enrollments/', StaffEnrollmentListCreateView.as_view(), name='staff-enrollments-list-create'),
+    path('staff/enrollments/<int:pk>/', StaffEnrollmentDetailView.as_view(), name='staff-enrollment-detail'),
+    path('staff/certificates/', StaffCertificateListCreateView.as_view(), name='staff-certificates-list-create'),
+    path('staff/certificates/<int:pk>/', StaffCertificateDetailView.as_view(), name='staff-certificate-detail'),
+
     # Courses / Subjects
     path('subjects/', SubjectListView.as_view(), name='subject-list'),
     path('subjects/<slug:slug>/', SubjectDetailView.as_view(), name='subject-detail'),
