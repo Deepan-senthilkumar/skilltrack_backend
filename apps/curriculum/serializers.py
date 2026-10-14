@@ -290,25 +290,25 @@ class TopicSerializer(AuditModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        request = self.context.get('request')
-        is_staff = request and getattr(request, 'user', None) and (
-            getattr(request.user, 'is_staff', False) or
-            getattr(request.user, 'role', '') in ['admin', 'ADMIN', 'instructor', 'STAFF']
-        )
-        if not is_staff and isinstance(data.get('quiz_questions'), list):
-            sanitized = []
-            for q in data['quiz_questions']:
+        # For in-topic practice MCQs (outer self-study questions):
+        # We serve the first 5 practice questions WITH correct_option & explanation
+        # so students can self-test, verify right/wrong answers, and read explanations.
+        if isinstance(data.get('quiz_questions'), list):
+            practice_questions = []
+            for q in data['quiz_questions'][:5]:
                 if isinstance(q, dict):
-                    sanitized.append({
+                    practice_questions.append({
                         'id': q.get('id'),
                         'question_text': q.get('question_text'),
                         'option_a': q.get('option_a'),
                         'option_b': q.get('option_b'),
                         'option_c': q.get('option_c'),
                         'option_d': q.get('option_d'),
+                        'correct_option': q.get('correct_option'),
+                        'explanation': q.get('explanation'),
                         'order': q.get('order')
                     })
-            data['quiz_questions'] = sanitized
+            data['quiz_questions'] = practice_questions
         return attach_audit_fields(data, instance)
 
 

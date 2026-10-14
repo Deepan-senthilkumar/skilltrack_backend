@@ -863,24 +863,33 @@ class TopicQuizStartView(views.APIView):
                 'error': f'Re-attempt cooldown active. Please re-read the study notes. You can re-attempt in {remaining // 60}m {remaining % 60}s.'
             }, status=status.HTTP_403_FORBIDDEN)
 
-        # 2. Fetch question bank
-        all_questions = list(TopicQuizQuestion.objects.filter(topic=topic))
-        if not all_questions:
+        # 2. Fetch question bank:
+        # Exclude the first 5 practice questions shown on the outer topic page
+        # ("veliya vandha mcq ulla vara kudadhu" - practice and secure test are distinct)
+        all_questions_count = TopicQuizQuestion.objects.filter(topic=topic).count()
+        practice_q_ids = list(TopicQuizQuestion.objects.filter(topic=topic).order_by('order', 'id').values_list('id', flat=True)[:5])
+        exam_pool = list(TopicQuizQuestion.objects.filter(topic=topic).exclude(id__in=practice_q_ids))
+        if len(exam_pool) < 5:
+            # Fallback if question bank is still small
+            exam_pool = list(TopicQuizQuestion.objects.filter(topic=topic))
+
+        if not exam_pool:
             return Response({
                 'error': 'No assessment questions configured for this topic yet. Please contact trainer/admin.',
                 'question_count': 0
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # 3. Random sample 5 questions from the bank (or all if < 5)
-        num_to_sample = min(5, len(all_questions))
-        sampled_questions = random.sample(all_questions, num_to_sample)
+        # 3. Random sample 5 questions from the distinct pool for this attempt
+        num_to_sample = min(5, len(exam_pool))
+        sampled_questions = random.sample(exam_pool, num_to_sample)
+        random.shuffle(sampled_questions)
 
         serializer = StudentQuizQuestionSerializer(sampled_questions, many=True)
         return Response({
             'topic_id': topic.id,
             'topic_title': topic.title,
             'topic_slug': topic.topic_id,
-            'total_questions_in_bank': len(all_questions),
+            'total_questions_in_bank': all_questions_count,
             'questions_served_count': num_to_sample,
             'pass_percentage_required': 50.0,
             'min_score_required': (num_to_sample + 1) // 2,
@@ -970,7 +979,8 @@ class TopicQuizSubmitView(views.APIView):
 
         for q in questions:
             user_choice = str(answers.get(str(q.id)) or answers.get(q.id) or '').strip().upper()
-            is_correct = (user_choice == q.correct_option)
+            correct_choice = str(q.correct_option or '').strip().upper()
+            is_correct = bool(user_choice and correct_choice and user_choice == correct_choice)
             if is_correct:
                 score += 1
 
