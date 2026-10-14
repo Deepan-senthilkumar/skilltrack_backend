@@ -191,8 +191,7 @@ class ProblemSubmitSolutionView(views.APIView):
                 tc_status = "PASS" if tc.get('is_passed') else "FAIL"
                 hidden_tag = " [Hidden]" if tc.get('is_hidden') else ""
                 summary_lines.append(f"• {tc.get('name')}{hidden_tag}: {tc_status}")
-            summary_lines.append("\n--- Primary Output ---")
-            summary_lines.append(exec_res.get('actual_output', ''))
+            raw_output = exec_res.get('actual_output', '')
             actual_output_summary = "\n".join(summary_lines)
 
         # Count prior attempts for this student & problem
@@ -208,7 +207,7 @@ class ProblemSubmitSolutionView(views.APIView):
             batch=batch,
             language=language,
             submitted_code=code,
-            actual_output=actual_output_summary,
+            actual_output=raw_output,
             expected_output=problem.expected_output,
             is_passed=exec_res['is_passed'],
             status=exec_res['status'],
@@ -218,10 +217,13 @@ class ProblemSubmitSolutionView(views.APIView):
             security_violations=security_violations,
             violation_details=violation_details,
             notes=notes,
-            score=score
+            score=score,
+            staff_feedback=actual_output_summary
         )
 
         response_data = SubmissionDetailSerializer(submission).data
+        response_data['actual_output'] = raw_output
+        response_data['evaluation_summary'] = actual_output_summary
         response_data['total_test_cases'] = exec_res.get('total_test_cases', 0)
         response_data['passed_test_cases'] = exec_res.get('passed_test_cases', 0)
         response_data['test_cases'] = exec_res.get('test_cases', [])

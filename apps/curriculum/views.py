@@ -156,7 +156,37 @@ class TopicDetailView(generics.RetrieveAPIView):
     queryset = Topic.objects.all().select_related('module__subject').prefetch_related('problems__access_control', 'examples', 'images')
     serializer_class = TopicSerializer
     lookup_field = 'topic_id'
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        lookup = self.kwargs.get(self.lookup_field)
+        topic = None
+        if lookup and str(lookup).isdigit():
+            topic = Topic.objects.filter(id=int(lookup)).select_related('module__subject').prefetch_related('problems__access_control', 'examples', 'images').first()
+        if not topic and lookup:
+            topic = Topic.objects.filter(topic_id=str(lookup)).select_related('module__subject').prefetch_related('problems__access_control', 'examples', 'images').first()
+        if not topic:
+            from rest_framework.exceptions import NotFound
+            raise NotFound("Topic not found.")
+
+        user = self.request.user
+        if getattr(user, 'is_staff', False) or getattr(user, 'role', '') in ['admin', 'ADMIN', 'instructor', 'STAFF']:
+            return topic
+
+        subject = topic.module.subject if topic.module else None
+        if subject:
+            is_enrolled = CourseEnrollment.objects.filter(
+                student=user,
+                subject=subject,
+                status__in=['ACTIVE', 'COMPLETED']
+            ).exists()
+            if not is_enrolled:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied(
+                    f"Enrollment required: You are not enrolled in '{subject.name}'. "
+                    f"Please enroll in this course to unlock topic notes and coding labs."
+                )
+        return topic
 
 
 class StaffTopicListCreateView(generics.ListCreateAPIView):
@@ -363,7 +393,28 @@ class StaffCodeExampleDetailView(generics.RetrieveUpdateDestroyAPIView):
 class ProblemDetailView(generics.RetrieveAPIView):
     queryset = Problem.objects.all().select_related('topic__module__subject')
     serializer_class = ProblemSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        problem = super().get_object()
+        user = self.request.user
+        if getattr(user, 'is_staff', False) or getattr(user, 'role', '') in ['admin', 'ADMIN', 'instructor', 'STAFF']:
+            return problem
+
+        subject = problem.topic.module.subject if (problem.topic and problem.topic.module) else None
+        if subject:
+            is_enrolled = CourseEnrollment.objects.filter(
+                student=user,
+                subject=subject,
+                status__in=['ACTIVE', 'COMPLETED']
+            ).exists()
+            if not is_enrolled:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied(
+                    f"Enrollment required: You are not enrolled in '{subject.name}'. "
+                    f"Please enroll in this course to access coding problems."
+                )
+        return problem
 
 
 class StaffProblemListCreateView(generics.ListCreateAPIView):
@@ -375,7 +426,7 @@ class StaffProblemListCreateView(generics.ListCreateAPIView):
         problem = serializer.save()
         from apps.assignments.models import ProblemAccess
         # pyrefly: ignore [missing-attribute]
-        is_unlocked = self.request.data.get('is_unlocked', True)
+        is_unlocked = self.request.data.get('is_unlocked', False)
         if isinstance(is_unlocked, str):
             is_unlocked = is_unlocked.lower() in ('true', '1', 'yes')
         access, _ = ProblemAccess.objects.get_or_create(problem=problem)
@@ -1207,39 +1258,40 @@ class EnrollCourseView(views.APIView):
         if not subject and subject_slug:
             subject = Subject.objects.filter(slug=subject_slug, is_deleted=False).first()
         if not subject:
-            subject = Subject.objects.filter(slug='c-programming', is_deleted=False).first() or Subject.objects.filter(is_deleted=False).first()
+            return Response({
+                'error': 'Course / Subject not found. Please specify a valid subject_id or subject_slug.'
+            }, status=status.HTTP_404_NOT_FOUND)
 
-        if not subject:
-            return Response({'error': 'Course / Subject not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        enrollment, created = CourseEnrollment.objects.get_or_create(
-            student=user,
-            subject=subject,
-            defaults={
-                'created_by': user,
-                'status': 'ACTIVE',
-                'enrolled_at': timezone.now()
-            }
-        )
-
-        if not created and enrollment.status != 'ACTIVE':
-            enrollment.status = 'ACTIVE'
-            enrollment.save(update_fields=['status'])
-
-        # Connect with active batch if available or auto-create default cohort batch
-        active_batch = Batch.objects.filter(course=subject, status='ACTIVE', is_deleted=False).first() or Batch.objects.filter(course=subject, is_deleted=False).first()
-        if not active_batch:
-            active_batch = Batch.objects.create(
-                name=f"{subject.name} - Cohort {timezone.now().year}",
-                course=subject,
-                status='ACTIVE',
-                created_by=user if user.is_staff else None
+        from django.db import transaction
+        with transaction.atomic():
+            enrollment, created = CourseEnrollment.objects.get_or_create(
+                student=user,
+                subject=subject,
+                defaults={
+                    'created_by': user,
+                    'status': 'ACTIVE',
+                    'enrolled_at': timezone.now()
+                }
             )
-        
-        active_batch.students.add(user)
-        if not enrollment.batch:
-            enrollment.batch = active_batch
-            enrollment.save(update_fields=['batch'])
+
+            if not created and enrollment.status != 'ACTIVE':
+                enrollment.status = 'ACTIVE'
+                enrollment.save(update_fields=['status'])
+
+            # Connect with active batch if available or auto-create default cohort batch
+            active_batch = Batch.objects.filter(course=subject, status='ACTIVE', is_deleted=False).first() or Batch.objects.filter(course=subject, is_deleted=False).first()
+            if not active_batch:
+                active_batch = Batch.objects.create(
+                    name=f"{subject.name} - Cohort {timezone.now().year}",
+                    course=subject,
+                    status='ACTIVE',
+                    created_by=user if user.is_staff else None
+                )
+            
+            active_batch.students.add(user)
+            if not enrollment.batch:
+                enrollment.batch = active_batch
+                enrollment.save(update_fields=['batch'])
 
         return Response({
             'success': True,

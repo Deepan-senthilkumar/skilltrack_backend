@@ -288,6 +288,29 @@ class TopicSerializer(AuditModelSerializer):
         validated_data['topic_id'] = topic_id
         return super().update(instance, validated_data)
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        is_staff = request and getattr(request, 'user', None) and (
+            getattr(request.user, 'is_staff', False) or
+            getattr(request.user, 'role', '') in ['admin', 'ADMIN', 'instructor', 'STAFF']
+        )
+        if not is_staff and isinstance(data.get('quiz_questions'), list):
+            sanitized = []
+            for q in data['quiz_questions']:
+                if isinstance(q, dict):
+                    sanitized.append({
+                        'id': q.get('id'),
+                        'question_text': q.get('question_text'),
+                        'option_a': q.get('option_a'),
+                        'option_b': q.get('option_b'),
+                        'option_c': q.get('option_c'),
+                        'option_d': q.get('option_d'),
+                        'order': q.get('order')
+                    })
+            data['quiz_questions'] = sanitized
+        return attach_audit_fields(data, instance)
+
 
 class ModuleSerializer(AuditModelSerializer):
     topics = TopicSerializer(many=True, read_only=True)
