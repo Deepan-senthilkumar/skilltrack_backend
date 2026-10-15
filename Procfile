@@ -1,1 +1,1 @@
-web: gunicorn kalari_backend.wsgi:application --log-file -
+web: gunicorn skilltrack_server.wsgi:application --log-file -

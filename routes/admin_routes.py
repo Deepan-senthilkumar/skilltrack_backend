@@ -1,0 +1,103 @@
+from django.urls import path
+from controllers.admin import (
+    AdminLoginController,
+    AdminProfileController,
+    AdminLogoutController,
+    AdminDailyLogListCreateController,
+    AdminDailyLogDetailController,
+    AdminDailyBatchMatrixController,
+    AdminReportingAnalyticsController,
+    AdminSubjectListCreateController,
+    AdminSubjectDetailController,
+    AdminModuleListCreateController,
+    AdminModuleDetailController,
+    AdminTopicListCreateController,
+    AdminTopicDetailController,
+    AdminCodeExampleListCreateController,
+    AdminCodeExampleDetailController,
+    AdminGenericImageUploadController,
+    AdminTopicImageUploadController,
+    AdminTopicImageDeleteController,
+    AdminTopicImageListView,
+    AdminBatchListCreateController,
+    AdminBatchDetailController,
+    AdminBatchTopicProgressListController,
+    AdminBatchTopicProgressToggleController,
+    AdminQuizQuestionListCreateController,
+    AdminQuizQuestionDetailController,
+    AdminBulkUploadQuizQuestionsController,
+    AdminQuizAttemptAnalyticsController,
+    AdminResetQuizCooldownController,
+    AdminProblemListCreateController,
+    AdminProblemDetailController,
+    AdminSubmissionListController,
+    AdminSubmissionDetailController,
+    AdminReviewSubmissionController,
+    AdminUpdateProblemAccessController,
+    AdminBulkProblemsAccessController,
+    AdminBulkModuleUnlockController,
+    AdminAssignmentsAnalyticsController,
+    AdminStudentListController,
+    AdminStudentCreateController,
+    AdminStudentDeleteController,
+    AdminUserListCreateController,
+    AdminUserDetailController,
+)
+
+urlpatterns = [
+    # Auth
+    path('auth/login/', AdminLoginController.as_view(), name='admin-auth-login'),
+    path('auth/profile/', AdminProfileController.as_view(), name='admin-auth-profile'),
+    path('auth/logout/', AdminLogoutController.as_view(), name='admin-auth-logout'),
+
+    # Dashboard & Reporting
+    path('dashboard/analytics/', AdminReportingAnalyticsController.as_view(), name='admin-dashboard-analytics'),
+    path('dashboard/matrix/', AdminDailyBatchMatrixController.as_view(), name='admin-dashboard-matrix'),
+    path('daily-logs/', AdminDailyLogListCreateController.as_view(), name='admin-daily-logs'),
+    path('daily-logs/<int:pk>/', AdminDailyLogDetailController.as_view(), name='admin-daily-log-detail'),
+
+    # Curriculum / Subjects
+    path('courses/', AdminSubjectListCreateController.as_view(), name='admin-courses'),
+    path('courses/<int:pk>/', AdminSubjectDetailController.as_view(), name='admin-course-detail'),
+    path('modules/', AdminModuleListCreateController.as_view(), name='admin-modules'),
+    path('modules/<int:pk>/', AdminModuleDetailController.as_view(), name='admin-module-detail'),
+    path('topics/', AdminTopicListCreateController.as_view(), name='admin-topics'),
+    path('topics/<int:pk>/', AdminTopicDetailController.as_view(), name='admin-topic-detail'),
+    path('code-examples/', AdminCodeExampleListCreateController.as_view(), name='admin-code-examples'),
+    path('code-examples/<int:pk>/', AdminCodeExampleDetailController.as_view(), name='admin-code-example-detail'),
+    path('upload-image/', AdminGenericImageUploadController.as_view(), name='admin-upload-image'),
+    path('topics/<int:topic_id>/images/', AdminTopicImageUploadController.as_view(), name='admin-topic-images'),
+    path('topics/<int:topic_id>/images/list/', AdminTopicImageListView.as_view(), name='admin-topic-images-list'),
+    path('topic-images/<int:pk>/delete/', AdminTopicImageDeleteController.as_view(), name='admin-topic-image-delete'),
+
+    # Batches
+    path('batches/', AdminBatchListCreateController.as_view(), name='admin-batches'),
+    path('batches/<int:pk>/', AdminBatchDetailController.as_view(), name='admin-batch-detail'),
+    path('batches/<int:batch_id>/progress/', AdminBatchTopicProgressListController.as_view(), name='admin-batch-progress'),
+    path('batches/<int:batch_id>/topics/<int:topic_id>/toggle/', AdminBatchTopicProgressToggleController.as_view(), name='admin-batch-topic-toggle'),
+
+    # Quizzes
+    path('quizzes/', AdminQuizQuestionListCreateController.as_view(), name='admin-quizzes'),
+    path('quizzes/<int:pk>/', AdminQuizQuestionDetailController.as_view(), name='admin-quiz-detail'),
+    path('quizzes/bulk/', AdminBulkUploadQuizQuestionsController.as_view(), name='admin-quizzes-bulk'),
+    path('quiz-analytics/', AdminQuizAttemptAnalyticsController.as_view(), name='admin-quiz-analytics'),
+    path('quiz-cooldown/reset/', AdminResetQuizCooldownController.as_view(), name='admin-quiz-cooldown-reset'),
+
+    # Problems & Code Runner Submissions
+    path('problems/', AdminProblemListCreateController.as_view(), name='admin-problems'),
+    path('problems/<int:pk>/', AdminProblemDetailController.as_view(), name='admin-problem-detail'),
+    path('problems/<int:pk>/access/', AdminUpdateProblemAccessController.as_view(), name='admin-problem-access'),
+    path('problems/bulk-access/', AdminBulkProblemsAccessController.as_view(), name='admin-problems-bulk-access'),
+    path('modules/unlock/', AdminBulkModuleUnlockController.as_view(), name='admin-module-unlock'),
+    path('submissions/', AdminSubmissionListController.as_view(), name='admin-submissions'),
+    path('submissions/<int:pk>/', AdminSubmissionDetailController.as_view(), name='admin-submission-detail'),
+    path('submissions/<int:pk>/review/', AdminReviewSubmissionController.as_view(), name='admin-submission-review'),
+    path('submissions-analytics/', AdminAssignmentsAnalyticsController.as_view(), name='admin-submissions-analytics'),
+
+    # Students & Users
+    path('students/', AdminStudentListController.as_view(), name='admin-students'),
+    path('students/create/', AdminStudentCreateController.as_view(), name='admin-student-create'),
+    path('students/<int:pk>/', AdminStudentDeleteController.as_view(), name='admin-student-delete'),
+    path('users/', AdminUserListCreateController.as_view(), name='admin-users'),
+    path('users/<int:pk>/', AdminUserDetailController.as_view(), name='admin-user-detail'),
+]

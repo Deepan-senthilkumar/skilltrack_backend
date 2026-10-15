@@ -48,9 +48,10 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'middleware.error_middleware.APIErrorHandlingMiddleware',
 ]
 
-ROOT_URLCONF = 'kalari_backend.urls'
+ROOT_URLCONF = 'skilltrack_server.urls'
 
 TEMPLATES = [
     {
@@ -68,7 +69,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'kalari_backend.wsgi.application'
+WSGI_APPLICATION = 'skilltrack_server.wsgi.application'
 
 # Database Configuration (Supabase PostgreSQL Cloud DB or local SQLite)
 DEFAULT_SUPABASE_DB = 'postgresql://postgres.ystzefjfudtqgrzlcgmb:%26Deep%40n3434%24@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require'

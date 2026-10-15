@@ -18,9 +18,7 @@ urlpatterns = [
     path('', health_check, name='root'),
     path('admin/', admin.site.urls),
     path('api/health/', health_check, name='health-check'),
-    path('api/', include('apps.users.urls')),
-    path('api/', include('apps.curriculum.urls')),
-    path('api/', include('apps.assignments.urls')),
+    path('api/', include('routes.base_routes')),
 
     # Dedicated persistent media routes (serves in dev and prod on Render with DEBUG=False)
     re_path(r'^media/(?P<path>.*)$', serve_media_file, name='media-serve'),
