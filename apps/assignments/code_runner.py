@@ -51,6 +51,8 @@ def find_c_compiler() -> Optional[str]:
     
     # Common Windows directories
     win_paths = [
+        r"C:\Deepan\w64devkit\bin\gcc.exe",
+        r"C:\w64devkit\bin\gcc.exe",
         r"C:\msys64\ucrt64\bin\gcc.exe",
         r"C:\msys64\mingw64\bin\gcc.exe",
         r"C:\mingw64\bin\gcc.exe",
@@ -255,16 +257,46 @@ def execute_c_code(code: str, stdin_input: str = "", timeout_sec: float = 5.0) -
     if not gcc_path:
         return simulate_c_code(code, stdin_input)
 
+    files_to_write = {}
+    cleaned_code = code.strip()
+    if cleaned_code.startswith("{") and "files" in cleaned_code:
+        try:
+            import json
+            data = json.loads(cleaned_code)
+            if "files" in data and isinstance(data["files"], list):
+                for f in data["files"]:
+                    fname = f.get("name", "main.c")
+                    fcontent = f.get("content", "")
+                    files_to_write[fname] = fcontent
+        except Exception:
+            pass
+
+    if not files_to_write and "// === file:" in code:
+        parts = re.split(r'//\s*===\s*file:\s*([^\s=]+)\s*===', code)
+        if len(parts) > 1:
+            for i in range(1, len(parts), 2):
+                fname = parts[i].strip()
+                fcontent = parts[i+1] if i+1 < len(parts) else ""
+                files_to_write[fname] = fcontent
+
+    if not files_to_write:
+        files_to_write["solution.c"] = code
+
     with tempfile.TemporaryDirectory() as temp_dir:
-        src_path = os.path.join(temp_dir, "solution.c")
         exe_path = os.path.join(temp_dir, "solution.exe" if os.name == 'nt' else "solution")
 
-        with open(src_path, "w", encoding="utf-8") as f:
-            f.write(code)
+        for fname, fcontent in files_to_write.items():
+            safe_name = os.path.basename(fname.replace('\\', '/'))
+            with open(os.path.join(temp_dir, safe_name), "w", encoding="utf-8") as f:
+                f.write(fcontent)
 
-        # Compile with -w (suppress warnings like void main), -O2, -lm
+        c_files = [f for f in os.listdir(temp_dir) if f.endswith('.c')]
+        if not c_files:
+            c_files = ["solution.c"]
+
+        # Compile all .c source files with -w (suppress warnings), -O2, -lm
         compile_proc = subprocess.run(
-            [gcc_path, "-w", "-O2", src_path, "-o", exe_path, "-lm"],
+            [gcc_path, "-w", "-O2"] + c_files + ["-o", exe_path, "-lm"],
             capture_output=True,
             text=True,
             cwd=temp_dir
