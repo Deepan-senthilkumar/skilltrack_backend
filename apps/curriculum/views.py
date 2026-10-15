@@ -1057,6 +1057,10 @@ class StudentTopicProgressListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
+        user = self.request.user
+        student_id = self.request.query_params.get('student_id')
+        if (user.is_staff or getattr(user, 'is_admin_role', False)) and student_id:
+            return StudentTopicProgress.objects.filter(student_id=student_id).select_related('topic', 'topic__module', 'topic__module__subject')
         return StudentTopicProgress.objects.filter(student=self.request.user).select_related('topic')
 
 

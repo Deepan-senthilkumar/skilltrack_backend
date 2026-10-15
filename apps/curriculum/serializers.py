@@ -67,6 +67,8 @@ class StudentTopicProgressSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source='student.display_name', read_only=True)
     student_username = serializers.CharField(source='student.username', read_only=True)
     topic_title = serializers.CharField(source='topic.title', read_only=True)
+    module_name = serializers.CharField(source='topic.module.name', read_only=True, default='')
+    subject_name = serializers.CharField(source='topic.module.subject.name', read_only=True, default='')
     is_in_cooldown = serializers.BooleanField(read_only=True)
     cooldown_seconds_remaining = serializers.IntegerField(source='cooldown_seconds_remaining', read_only=True)
 
@@ -74,8 +76,9 @@ class StudentTopicProgressSerializer(serializers.ModelSerializer):
         model = StudentTopicProgress
         fields = [
             'id', 'student', 'student_name', 'student_username',
-            'topic', 'topic_title', 'is_completed', 'completed_at',
-            'attempts_count', 'last_score', 'last_total', 'last_percentage',
+            'topic', 'topic_title', 'module_name', 'subject_name',
+            'is_completed', 'completed_at', 'attempts_count',
+            'last_score', 'last_total', 'last_percentage',
             'last_passed', 'can_reattempt_after', 'is_in_cooldown',
             'cooldown_seconds_remaining', 'updated_at'
         ]
